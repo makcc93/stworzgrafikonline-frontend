@@ -1,0 +1,32 @@
+# zależności
+node_modules/
+
+# build output (generowany przez CI/Docker)
+dist/
+dist-ssr/
+
+# zmienne środowiskowe (sekrety) - .env.example zostaje w repo jako szablon
+.env
+.env.local
+.env.*.local
+
+# cache narzędzi
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# logi
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# system / edytor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# testy
+coverage/
