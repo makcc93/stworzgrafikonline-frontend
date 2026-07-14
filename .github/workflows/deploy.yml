@@ -44,6 +44,6 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /path/do/projektu/na/vps
+            cd /opt/stworzgrafik
             docker compose pull frontend
             docker compose up -d frontend
