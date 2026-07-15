@@ -120,53 +120,50 @@ export const scheduleService = {
    * Dane są identyczne z podglądem w ScheduleViewer (ta sama baza).
    * Nie uruchamia ponownie algorytmu.
    */
-  exportFromDatabase: async (storeId: number, scheduleId: number): Promise<Blob> => {
-    const token =
-      localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
+exportFromDatabase: async (storeId: number, scheduleId: number): Promise<{ downloadUrl: string; filename: string }> => {
+  const token =
+    localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
 
-    const headers: HeadersInit = {
-      Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: HeadersInit = { Accept: 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const response = await fetch(
-      buildUrl(`${API_CONFIG.ENDPOINTS.scheduleById(storeId, scheduleId)}/export`),
-      { method: 'GET', headers },
-    );
+  const response = await fetch(
+    buildUrl(`${API_CONFIG.ENDPOINTS.scheduleById(storeId, scheduleId)}/export`),
+    { method: 'GET', headers },
+  );
 
-    if (!response.ok) {
-      const msg = await response.text().catch(() => response.statusText);
-      throw new Error(msg || response.statusText);
-    }
+  if (!response.ok) {
+    const msg = await response.text().catch(() => response.statusText);
+    throw new Error(msg || response.statusText);
+  }
 
-    return response.blob();
-  },
+  return response.json();
+},
 
   /**
    * Eksportuje gotowy grafik jako plik PDF.
    * GET /api/stores/{storeId}/schedules/{scheduleId}/exportPdf
    */
-  exportPdf: async (storeId: number, scheduleId: number): Promise<Blob> => {
-    const token =
-      localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
 
-    const headers: HeadersInit = {
-      Accept: 'application/pdf',
-    };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+	exportPdf: async (storeId: number, scheduleId: number): Promise<{ downloadUrl: string; filename: string }> => {
+	  const token =
+	    localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
 
-    const response = await fetch(
-      buildUrl(`${API_CONFIG.ENDPOINTS.scheduleById(storeId, scheduleId)}/exportPdf`),
-      { method: 'GET', headers },
-    );
+	  const headers: HeadersInit = { Accept: 'application/json' };
+	  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    if (!response.ok) {
-      const msg = await response.text().catch(() => response.statusText);
-      throw new Error(msg || response.statusText);
-    }
+	  const response = await fetch(
+	    buildUrl(`${API_CONFIG.ENDPOINTS.scheduleById(storeId, scheduleId)}/exportPdf`),
+	    { method: 'GET', headers },
+	  );
 
-    return response.blob();
-  },
+	  if (!response.ok) {
+	    const msg = await response.text().catch(() => response.statusText);
+	    throw new Error(msg || response.statusText);
+	  }
+
+	  return response.json();
+	},
 
   /**
    * Generate schedule — zwraca plik Excel (.xlsx) jako Blob gotowy do pobrania.
