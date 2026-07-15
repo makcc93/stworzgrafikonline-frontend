@@ -9,7 +9,7 @@ export const API_CONFIG = {
     storeDetails: (storeId: number) => `/api/stores/${storeId}/details`,
     storeDelivery: (storeId: number) => `/api/stores/${storeId}/deliveries`,
     storeOpeningHours: (storeId: number) => `/api/stores/${storeId}/opening-hours`,
-    storeShiftHourConfig: (storeId: number) => `/stores/${storeId}/shift-hour-config`,
+    storeShiftHourConfig: (storeId: number) => `/api/stores/${storeId}/shift-hour-config`,
 
     // employee context
     employees: (storeId: number) => `/api/stores/${storeId}/employees`,
@@ -31,7 +31,7 @@ export const API_CONFIG = {
     branches: '/api/branches',
     branchById: (id: number) => `/api/branches/${id}`,
     positions: '/api/positions',
-    billingPeriodConfig: '/billing-period-config',
+    billingPeriodConfig: '/api/billing-period-config',
     specialWorkNorms: '/api/special-work-norms',
     employeeHoursConfirmation: (storeId: number) => `/api/stores/${storeId}/hoursConfirmation`,
 
