@@ -359,36 +359,44 @@ export default function SchedulePreparationModal({
   // Generate
   // ---------------------------------------------------------------------------
 
-  const handleGenerateAndDownload = async () => {
-    setIsGenerating(true);
-    const toastId = toast.loading('Tworzenie grafiku w bazie…');
-    try {
-      const created = await scheduleService.create(storeId, {
-        year: selectedYear,
-        month: selectedMonth + 1,
-        scheduleStatusName: 'IN_PROGRESS',
-      });
+	const handleGenerateAndDownload = async () => {
+	  setIsGenerating(true);
+	  const toastId = toast.loading('Tworzenie grafiku w bazie…');
+	  try {
+	    const created = await scheduleService.create(storeId, {
+	      year: selectedYear,
+	      month: selectedMonth + 1,
+	      scheduleStatusName: 'IN_PROGRESS',
+	    });
 
-      toast.loading('Uruchamianie algorytmu…', { id: toastId });
+	    toast.loading('Uruchamianie algorytmu…', { id: toastId });
 
-      const blob = await scheduleService.generate(storeId, created.id);
-      const filename = `grafik_${created.month}_${created.year}.xlsx`;
-      triggerDownload(blob, filename);
+	    await scheduleService.generate(storeId, created.id);
 
-      toast.success('Grafik wygenerowany! Plik pobrany.', { id: toastId });
+	    toast.loading('Pobieranie pliku…', { id: toastId });
 
-      setStep('checklist');
-      setCheckedItems(new Set());
-      setSummaryData(null);
-      onClose();
-      onProceed(created.id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Nieznany błąd';
-      toast.error(`Błąd: ${msg}`, { id: toastId });
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+	    const { downloadUrl, filename } = await scheduleService.exportFromDatabase(storeId, created.id);
+	    const a = document.createElement('a');
+	    a.href = downloadUrl;
+	    a.download = filename;
+	    document.body.appendChild(a);
+	    a.click();
+	    a.remove();
+
+	    toast.success('Grafik wygenerowany! Plik pobrany.', { id: toastId });
+
+	    setStep('checklist');
+	    setCheckedItems(new Set());
+	    setSummaryData(null);
+	    onClose();
+	    onProceed(created.id);
+	  } catch (err) {
+	    const msg = err instanceof Error ? err.message : 'Nieznany błąd';
+	    toast.error(`Błąd: ${msg}`, { id: toastId });
+	  } finally {
+	    setIsGenerating(false);
+	  }
+	};
 
   if (!isOpen) return null;
 

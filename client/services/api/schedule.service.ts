@@ -165,33 +165,29 @@ exportFromDatabase: async (storeId: number, scheduleId: number): Promise<{ downl
 	  return response.json();
 	},
 
-  /**
-   * Generate schedule — zwraca plik Excel (.xlsx) jako Blob gotowy do pobrania.
-   * POST /api/stores/{storeId}/schedules/{scheduleId}/generate
-   */
-  generate: async (storeId: number, scheduleId: number): Promise<Blob> => {
-    const token =
-      localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
+	/**
+	 * Generate schedule — algorytm generuje grafik i wgrywa Excel + PDF na Cloudflare R2.
+	 * Backend NIE zwraca juz pliku bezposrednio w odpowiedzi - po sukcesie nalezy
+	 * osobno wywolac exportFromDatabase()/exportPdf(), zeby dostac link do pobrania z R2.
+	 * POST /api/stores/{storeId}/schedules/{scheduleId}/generate
+	 */
+	generate: async (storeId: number, scheduleId: number): Promise<void> => {
+	  const token =
+	    localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
 
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      Accept:
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+	  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+	  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const response = await fetch(
-      buildUrl(`${API_CONFIG.ENDPOINTS.scheduleById(storeId, scheduleId)}/generate`),
-      { method: 'POST', headers, body: JSON.stringify({}) }
-    );
+	  const response = await fetch(
+	    buildUrl(`${API_CONFIG.ENDPOINTS.scheduleById(storeId, scheduleId)}/generate`),
+	    { method: 'POST', headers, body: JSON.stringify({}) }
+	  );
 
-    if (!response.ok) {
-      const msg = await response.text().catch(() => response.statusText);
-      throw new Error(msg || response.statusText);
-    }
-
-    return response.blob();
-  },
+	  if (!response.ok) {
+	    const msg = await response.text().catch(() => response.statusText);
+	    throw new Error(msg || response.statusText);
+	  }
+	},
 
   /**
    * Delete schedule
