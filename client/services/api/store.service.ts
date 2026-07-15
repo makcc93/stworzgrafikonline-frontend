@@ -50,9 +50,9 @@ export interface ApiError {
  * Get API base URL from environment variables
  */
 function getApiBaseUrl(): string {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL;
+  const baseUrl = import.meta.env.VITE_API_URL;
   if (!baseUrl) {
-    console.warn('VITE_API_BASE_URL not set, using relative URL /api');
+    console.warn('VITE_API_URL not set, using relative URL /api');
     return '/api';
   }
   return baseUrl;
