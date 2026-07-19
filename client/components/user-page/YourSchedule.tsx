@@ -7,11 +7,12 @@ import {
 import { useAppContext } from '@/context/AppContext';
 import { scheduleService } from '@/services/api-provider';
 import { ScheduleStatus } from '@/types/shared.types';
-import type { ResponseScheduleDTO, ResponseScheduleDetailsDTO, ShiftCode } from '@/types/schedule.types';
+import type { ResponseScheduleDTO, ResponseScheduleDetailsDTO } from '@/types/schedule.types';
 import { ScheduleMonth } from '@/types';
 import SchedulePreparationModal from './SchedulePreparationModal';
 import ScheduleViewer from './ScheduleViewer';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
+import { sumScheduleDetailHours } from '@/utils/shiftNormalize';
 import {
   Area,
   AreaChart,
@@ -23,45 +24,6 @@ import {
 } from 'recharts';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Oblicza długość zmiany w godzinach na podstawie startHour/endHour "HH:MM:SS".
- * Obsługuje zmiany przechodzące przez północ.
- * Zwraca 0 dla zmiany 00:00→00:00 (wolne/urlop/L4).
- */
-function computeShiftHours(startHour: string, endHour: string): number {
-  const [sh, sm] = startHour.split(':').map(Number);
-  const [eh, em] = endHour.split(':').map(Number);
-
-  // specjalny przypadek: 00:00→00:00 to wolne, nie zmiana 24h
-  if (sh === 0 && sm === 0 && eh === 0 && em === 0) return 0;
-
-  const startMinutes = sh * 60 + (sm ?? 0);
-  const endMinutes   = eh * 60 + (em ?? 0);
-  const diff = endMinutes - startMinutes;
-  return (diff > 0 ? diff : diff + 24 * 60) / 60;
-}
-
-/**
- * Liczy łączne godziny ze szczegółów grafiku korzystając bezpośrednio
- * z pól startHour/endHour/shiftCode/defaultHours z ResponseScheduleDetailsDTO.
- */
-function sumHoursFromDetails(details: ResponseScheduleDetailsDTO[]): number {
-  let total = 0;
-  for (const d of details) {
-    const code = d.shiftCode as ShiftCode;
-    if (code === 'WORK' || code === 'WORK_BY_PROPOSAL') {
-      total += computeShiftHours(d.startHour, d.endHour);
-    } else if (code === 'VACATION' || code === 'SICK_LEAVE') {
-      // Dla urlopu/L4 shift ma 00:00→00:00 — prawdziwa wartość jest w defaultHours
-      if (d.defaultHours != null) {
-        total += d.defaultHours;
-      }
-    }
-    // DAY_OFF, DELEGATION — nie liczą do godzin
-  }
-  return total;
-}
 
 // ── Extended schedule entry ───────────────────────────────────────────────────
 
@@ -184,7 +146,7 @@ export default function YourSchedule() {
             ? detailsPage
             : (detailsPage?.content ?? []);
 
-          totalHours = sumHoursFromDetails(details);
+          totalHours = sumScheduleDetailHours(details);
         } catch {
           // jeśli details nie istnieją — zostaje 0
         }

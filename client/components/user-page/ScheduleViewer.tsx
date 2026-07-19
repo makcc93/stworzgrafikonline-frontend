@@ -3,6 +3,7 @@ import { X, Loader, ChevronLeft, ChevronRight, Download, FileText, Clock, Calend
 import { toast } from 'sonner';
 import { scheduleService } from '@/services/api/schedule.service';
 import { employeeService } from '@/services/api-provider';
+import { computeShiftHours, normalizeToTimeString } from '@/utils/shiftNormalize';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
 import type { ResponseScheduleDetailsDTO, ShiftCode } from '@/types/schedule.types';
 
@@ -60,29 +61,10 @@ function daysInMonth(year: number, month: number): number {
 }
 
 /**
- * Oblicza długość zmiany w godzinach na podstawie startHour/endHour w formacie "HH:MM:SS".
- * Obsługuje zmiany przechodzące przez północ.
- * Zwraca 0 dla zmiany 00:00→00:00 (wolne).
+ * Formatuje LocalTime (string/obiekt/tablica z backendu) → "HH:MM".
  */
-function computeShiftHours(startHour: string, endHour: string): number {
-  const [sh, sm] = startHour.split(':').map(Number);
-  const [eh, em] = endHour.split(':').map(Number);
-
-  // specjalny przypadek: 00:00→00:00 to wolne, nie zmiana 24h
-  if (sh === 0 && sm === 0 && eh === 0 && em === 0) return 0;
-
-  const startMinutes = sh * 60 + (sm ?? 0);
-  const endMinutes   = eh * 60 + (em ?? 0);
-
-  const diff = endMinutes - startMinutes;
-  return (diff > 0 ? diff : diff + 24 * 60) / 60;
-}
-
-/**
- * Formatuje LocalTime "HH:MM:SS" → "HH:MM".
- */
-function fmtTime(t: string): string {
-  return typeof t === 'string' ? t.substring(0, 5) : String(t);
+function fmtTime(t: unknown): string {
+  return normalizeToTimeString(t).substring(0, 5);
 }
 
 /**
