@@ -499,7 +499,7 @@ export default function SchedulePreparationModal({
                 transition={{ duration: 0.18 }}
                 className="flex flex-col flex-1 min-h-0"
               >
-                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+                <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-3">
                   <p className="text-slate-400 text-sm mb-4">
                     Zanim wygenerujesz grafik, upewnij się że poniższe elementy zostały
                     przejrzane. Zaznacz każdą pozycję lub przejdź do danej sekcji.
@@ -639,7 +639,7 @@ export default function SchedulePreparationModal({
                 transition={{ duration: 0.18 }}
                 className="flex flex-col flex-1 min-h-0"
               >
-                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
                   {/* Intro */}
                   <p className="text-slate-400 text-sm">
                     Przejrzyj kluczowe dane miesiąca przed wygenerowaniem grafiku.

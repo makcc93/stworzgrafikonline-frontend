@@ -300,8 +300,8 @@ export default function Delegations() {
                 ) : employees.map(employee => {
                   const delegationRecord = getCurrentDelegationRecord(employee.id);
                   return (
-                  <tr key={employee.id} className="hover:bg-slate-700/20">
-                    <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 bg-slate-800/30 whitespace-nowrap min-w-40">
+                  <tr key={employee.id} className="group transition-colors hover:bg-amber-500/10">
+                    <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 bg-slate-800/30 group-hover:bg-amber-950/50 whitespace-nowrap min-w-40 transition-colors">
                       <p className="text-white font-semibold text-xl">{employee.firstName} {employee.lastName}</p>
                       <p className="text-xs text-slate-400">SAP {employee.sap}</p>
                       <LastModifiedInfo

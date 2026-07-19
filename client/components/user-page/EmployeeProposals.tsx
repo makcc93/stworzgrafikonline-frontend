@@ -664,9 +664,9 @@ export default function EmployeeProposals() {
             {/* Day off */}
             <button
               onClick={handleSelectDayOff}
-              className="w-full px-4 py-2 text-center text-white text-sm hover:bg-slate-600 transition-colors border-b border-slate-600 rounded-t-lg"
+              className="w-full px-4 py-2.5 text-center text-white text-sm font-bold uppercase tracking-wide bg-amber-600 hover:bg-amber-500 transition-colors border-b border-slate-600 rounded-t-lg shadow-inner"
             >
-              Dzień wolny
+              ☀ Dzień wolny
             </button>
 
             {/* Hour inputs */}
@@ -848,8 +848,8 @@ export default function EmployeeProposals() {
                   {employees.map((employee) => {
                     const employeeLastModifiedRecord = getEmployeeProposalLastModifiedRecord(employee.id);
                     return (
-                    <tr key={employee.id} className="hover:bg-slate-700/20">
-                      <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 bg-slate-800/30 whitespace-nowrap min-w-40">
+                    <tr key={employee.id} className="group transition-colors hover:bg-purple-500/10">
+                      <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 bg-slate-800/30 group-hover:bg-purple-950/50 whitespace-nowrap min-w-40 transition-colors">
                         <div>
                           <p className="text-white font-semibold text-xl">
                             {employee.firstName} {employee.lastName}

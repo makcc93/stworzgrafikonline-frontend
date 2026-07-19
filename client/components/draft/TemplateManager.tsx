@@ -331,6 +331,36 @@ export function TemplateManager({
         ))}
       </div>
 
+      {/* Kopiuj z dnia — umieszczone NAD wykresem, żeby było widoczne bez przewijania */}
+      <div className="px-4 pt-3 pb-1 bg-[#020617] flex items-center gap-2">
+        <span className="text-[10px] font-black text-slate-500 uppercase whitespace-nowrap">Szybkie kopiowanie:</span>
+        <div className="relative">
+          <select
+            value={copySourceDay}
+            onChange={e => {
+              const sourceValue = e.target.value;
+              setCopySourceDay(sourceValue);
+              const source = templates.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
+              if (source) {
+                setTemplates(prev => {
+                  const updated = prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: [...source.hourlyDemand] } : t);
+                  saveTemplatesToStorage(storeId, year, month, updated);
+                  return updated;
+                });
+                setHasChanges(true);
+                toast.success('Skopiowano!');
+                setCopySourceDay('');
+              }
+            }} className="pl-3 pr-8 py-2 bg-slate-800 text-white text-[10px] rounded-xl font-black appearance-none border border-slate-700 uppercase">
+            <option value="">KOPIUJ Z DNIA...</option>
+            {templates.filter(t => t.dayOfWeek !== selectedTemplate).map(t => (
+              <option key={t.dayOfWeek} value={t.dayOfWeek}>{t.dayName}</option>
+            ))}
+          </select>
+          <Copy className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
+        </div>
+      </div>
+
       {/* Chart */}
       <div className="p-4 bg-[#020617]">
         <div className="w-full">
@@ -407,9 +437,11 @@ export function TemplateManager({
                         )}
                       </div>
                     </div>
-                    <div className={cn("text-xs font-bold text-center mt-3 font-mono tracking-tighter",
+                    <div className={cn("flex flex-col items-center leading-none mt-3 font-mono tracking-tighter",
                       isNight ? "text-amber-500" : "text-slate-400 group-hover:text-white")}>
-                      {hour.toString().padStart(2, '0')}
+                      <span className="text-xs font-bold">{hour.toString().padStart(2, '0')}</span>
+                      <span className="text-[9px] font-semibold opacity-60">·</span>
+                      <span className="text-[9px] font-semibold opacity-60">{(hour + 1).toString().padStart(2, '0')}</span>
                     </div>
                   </div>
                 );
@@ -447,31 +479,6 @@ export function TemplateManager({
             className="px-4 py-2 bg-slate-900 text-red-500 border border-red-900/50 text-xs rounded-xl font-black hover:bg-red-600 hover:text-white">
             WYCZYŚĆ
           </button>
-          <div className="relative">
-            <select
-              value={copySourceDay}
-              onChange={e => {
-                const sourceValue = e.target.value;
-                setCopySourceDay(sourceValue);
-                const source = templates.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
-                if (source) {
-                  setTemplates(prev => {
-                    const updated = prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: [...source.hourlyDemand] } : t);
-                    saveTemplatesToStorage(storeId, year, month, updated);
-                    return updated;
-                  });
-                  setHasChanges(true);
-                  toast.success('Skopiowano!');
-                  setCopySourceDay('');
-                }
-              }} className="pl-3 pr-8 py-2 bg-slate-800 text-white text-[10px] rounded-xl font-black appearance-none border border-slate-700 uppercase">
-              <option value="">KOPIUJ Z DNIA...</option>
-              {templates.filter(t => t.dayOfWeek !== selectedTemplate).map(t => (
-                <option key={t.dayOfWeek} value={t.dayOfWeek}>{t.dayName}</option>
-              ))}
-            </select>
-            <Copy className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
-          </div>
         </div>
       </div>
     </div>

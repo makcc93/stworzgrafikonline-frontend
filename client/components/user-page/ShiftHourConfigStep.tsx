@@ -198,8 +198,8 @@ export default function ShiftHourConfigStep({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-8">
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-8">
 
         {/* Info banner */}
         <div className="flex items-start gap-3 bg-blue-500/10 border border-blue-500/25 rounded-xl px-4 py-3 text-blue-300 text-xs">

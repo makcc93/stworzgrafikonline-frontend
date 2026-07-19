@@ -200,10 +200,12 @@ export function DraftChart({ draft, onSave, maxValue, openHour, closeHour }: Dra
                     </div>
                     {/* Godzina - Zgodnie z Twoją prośbą: większa i czytelniejsza */}
                     <div className={cn(
-                      "text-xs font-bold text-center mt-3 font-mono transition-colors tracking-tighter",
+                      "flex flex-col items-center leading-none mt-3 font-mono transition-colors tracking-tighter",
                       isNight ? "text-amber-500 font-black" : "text-slate-500 group-hover:text-white"
                     )}>
-                      {hour.toString().padStart(2, '0')}
+                      <span className="text-xs font-bold">{hour.toString().padStart(2, '0')}</span>
+                      <span className="text-[9px] font-semibold opacity-60">·</span>
+                      <span className="text-[9px] font-semibold opacity-60">{(hour + 1).toString().padStart(2, '0')}</span>
                     </div>
                   </div>
                 );
