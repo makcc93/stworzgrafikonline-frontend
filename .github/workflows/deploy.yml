@@ -1,12 +1,9 @@
 name: Build i deploy frontendu
-
 on:
   push:
     branches: [master]
-
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -16,6 +13,9 @@ jobs:
     steps:
       - name: Checkout kodu
         uses: actions/checkout@v4
+
+      - name: Konfiguracja Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Logowanie do GHCR
         uses: docker/login-action@v3
@@ -32,6 +32,11 @@ jobs:
           tags: ${{ env.IMAGE_NAME }}:latest
           build-args: |
             VITE_API_URL=${{ secrets.VITE_API_URL }}
+          # Wyłączone provenance/SBOM — domyślne attestation manifesty w build-push-action@v6
+          # potrafią powodować "ERROR: failed to build: unknown blob" przy pushu do ghcr.io
+          # (znany problem buildx + GHCR). Sam obraz działa identycznie bez nich.
+          provenance: false
+          sbom: false
 
   deploy:
     needs: build-and-push
