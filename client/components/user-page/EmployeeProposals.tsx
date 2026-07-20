@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import { Calendar, X, Loader, ChevronLeft, ChevronRight, UserCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { isWholeHourShift, shiftMatchesHours, normalizeToTimeString } from '@/utils/shiftNormalize';
@@ -590,7 +590,18 @@ export default function EmployeeProposals() {
     const [showMenu, setShowMenu] = useState(false);
     const [inputStart, setInputStart] = useState<number>(8);
     const [inputEnd,   setInputEnd]   = useState<number>(14);
-    const menuRef = useRef<HTMLDivElement>(null);
+    const menuRef   = useRef<HTMLDivElement>(null);
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    const panelRef  = useRef<HTMLDivElement>(null);
+    // Pozycja okienka liczona dynamicznie (patrz useLayoutEffect niżej),
+    // żeby zawsze mieściło się w widocznym obszarze ekranu — niezależnie
+    // od tego, gdzie na liście/tabeli znajduje się dana komórka.
+    const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({
+      position: 'fixed',
+      top: -9999,
+      left: -9999,
+      visibility: 'hidden',
+    });
 
     useEffect(() => {
       const handleClickOutside = (e: MouseEvent) => {
@@ -602,6 +613,61 @@ export default function EmployeeProposals() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
       }
+    }, [showMenu]);
+
+    // Inteligentne pozycjonowanie okienka: domyślnie otwiera się pod przyciskiem,
+    // ale jeśli nie mieści się do dołu ekranu — otwiera się nad przyciskiem;
+    // poziomo jest wyśrodkowane względem przycisku, ale nigdy nie wychodzi
+    // poza lewą/prawą krawędź ekranu. Przeliczane też przy scrollu/resize,
+    // żeby okienko "podążało" za przyciskiem, gdy tabela jest przewijana.
+    useLayoutEffect(() => {
+      if (!showMenu) return;
+
+      const reposition = () => {
+        const btn = buttonRef.current;
+        const panel = panelRef.current;
+        if (!btn || !panel) return;
+
+        const margin = 8;
+        const btnRect = btn.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        // Pionowo — pod przyciskiem, chyba że więcej miejsca jest nad nim
+        const spaceBelow = vh - btnRect.bottom;
+        const spaceAbove = btnRect.top;
+        let top: number;
+        if (spaceBelow >= panelRect.height + margin || spaceBelow >= spaceAbove) {
+          top = btnRect.bottom + 4;
+          if (top + panelRect.height > vh - margin) {
+            top = Math.max(margin, vh - margin - panelRect.height);
+          }
+        } else {
+          top = btnRect.top - panelRect.height - 4;
+          if (top < margin) top = margin;
+        }
+
+        // Poziomo — wyśrodkowane względem przycisku, ale w granicach ekranu
+        let left = btnRect.left + btnRect.width / 2 - panelRect.width / 2;
+        left = Math.min(Math.max(left, margin), vw - panelRect.width - margin);
+
+        setMenuStyle({ position: 'fixed', top, left, visibility: 'visible' });
+      };
+
+      reposition();
+      window.addEventListener('resize', reposition);
+      // capture: true — łapie też scroll wewnątrz przewijanego kontenera tabeli
+      window.addEventListener('scroll', reposition, true);
+      // Panel zmienia wysokość (np. pojawia się przycisk "Resetuj") —
+      // ResizeObserver przelicza pozycję przy każdej takiej zmianie.
+      const ro = new ResizeObserver(reposition);
+      if (panelRef.current) ro.observe(panelRef.current);
+      return () => {
+        window.removeEventListener('resize', reposition);
+        window.removeEventListener('scroll', reposition, true);
+        ro.disconnect();
+      };
     }, [showMenu]);
 
     const handleSelectDayOff = () => {
@@ -667,6 +733,7 @@ export default function EmployeeProposals() {
     return (
       <div className="relative w-full" ref={menuRef}>
         <button
+          ref={buttonRef}
           onClick={() => setShowMenu(!showMenu)}
           disabled={saving}
           className={`w-full px-1.5 py-1 rounded font-medium text-xs transition-all border-0 focus:outline-none focus:ring-2 focus:ring-purple-500 whitespace-pre-line disabled:opacity-50 ${
@@ -679,7 +746,11 @@ export default function EmployeeProposals() {
         </button>
 
         {showMenu && (
-          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 bg-slate-700 border border-slate-600 rounded-lg shadow-2xl z-50 min-w-72">
+          <div
+            ref={panelRef}
+            style={menuStyle}
+            className="bg-slate-700 border border-slate-600 rounded-lg shadow-2xl z-50 min-w-72"
+          >
             {/* Day off */}
             <button
               onClick={handleSelectDayOff}
@@ -821,11 +892,11 @@ export default function EmployeeProposals() {
 
           {/* Table */}
           {!loadingProposals && (
-            <div className="p-4 overflow-x-auto flex-1 flex flex-col">
+            <div className="p-4 overflow-auto flex-1 min-h-0">
               <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-800/50">
-                    <th className="border border-slate-600 px-3 py-2 text-left text-slate-300 font-medium sticky left-0 bg-slate-800/50 min-w-40">
+                    <th className="border border-slate-600 px-3 py-2 text-left text-slate-300 font-medium sticky top-0 left-0 z-20 bg-slate-800/50 min-w-40 h-10">
                       Pracownik
                     </th>
                     {Array.from({ length: daysInMonth }, (_, i) => {
@@ -833,7 +904,7 @@ export default function EmployeeProposals() {
                       return (
                         <th
                           key={`day-${i}`}
-                          className={`border px-0.5 py-1 text-center font-medium text-xs w-12 h-10 ${
+                          className={`border px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${
                             isWeekend(day)
                               ? 'border-slate-500 bg-slate-700/50 text-slate-400'
                               : 'border-slate-600 bg-slate-800/50 text-slate-300'
@@ -845,16 +916,16 @@ export default function EmployeeProposals() {
                     })}
                   </tr>
                   <tr className="bg-slate-800/30">
-                    <th className="border border-slate-600 px-3 py-1 text-left text-slate-400 font-normal sticky left-0 bg-slate-800/30 min-w-40" />
+                    <th className="border border-slate-600 px-3 py-1 text-left text-slate-400 font-normal sticky top-10 left-0 z-20 bg-slate-800/30 min-w-40" />
                     {Array.from({ length: daysInMonth }, (_, i) => {
                       const day = i + 1;
                       return (
                         <th
                           key={`dow-${i}`}
-                          className={`border px-0.5 py-0.5 text-center font-normal text-xs w-12 ${
+                          className={`border px-0.5 py-0.5 text-center font-normal text-xs w-12 sticky top-10 z-10 ${
                             isWeekend(day)
                               ? 'border-slate-500 bg-slate-700/30'
-                              : 'border-slate-600'
+                              : 'border-slate-600 bg-slate-800/30'
                           }`}
                         >
                           {getDayOfWeek(day)}
@@ -868,7 +939,7 @@ export default function EmployeeProposals() {
                     const employeeLastModifiedRecord = getEmployeeProposalLastModifiedRecord(employee.id);
                     return (
                     <tr key={employee.id} className="group transition-colors hover:bg-purple-500/10">
-                      <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 bg-slate-800/30 group-hover:bg-purple-950/50 whitespace-nowrap min-w-40 transition-colors">
+                      <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 z-[5] bg-slate-800/30 group-hover:bg-purple-950/50 whitespace-nowrap min-w-40 transition-colors">
                         <div>
                           <p className="text-white font-semibold text-xl">
                             {employee.firstName} {employee.lastName}

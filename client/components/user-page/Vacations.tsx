@@ -332,21 +332,21 @@ export default function Vacations() {
             </button>
           </div>
 
-          <div className="p-4 overflow-x-auto flex-1 flex flex-col">
+          <div className="p-4 overflow-auto flex-1 min-h-0">
             <table className="w-full border-collapse select-none text-xs">
               <thead>
                 <tr className="bg-slate-800/50">
-                  <th className="border border-slate-600 px-3 py-2 text-left text-slate-300 font-medium sticky left-0 bg-slate-800/50 min-w-40">Pracownik</th>
+                  <th className="border border-slate-600 px-3 py-2 text-left text-slate-300 font-medium sticky top-0 left-0 z-20 bg-slate-800/50 min-w-40 h-10">Pracownik</th>
                   {Array.from({ length: daysInMonth }, (_, i) => (
-                    <th key={`day-${i}`} className={`border border-slate-600 px-0.5 py-1 text-center font-medium text-xs w-12 h-10 ${getDayType(i + 1) === 'weekend' ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-800/50 text-slate-300'}`}>
+                    <th key={`day-${i}`} className={`border border-slate-600 px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${getDayType(i + 1) === 'weekend' ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-800/50 text-slate-300'}`}>
                       {i + 1}
                     </th>
                   ))}
                 </tr>
                 <tr className="bg-slate-800/30">
-                  <th className="border border-slate-600 px-3 py-1 text-left text-slate-400 font-normal sticky left-0 bg-slate-800/30 min-w-40" />
+                  <th className="border border-slate-600 px-3 py-1 text-left text-slate-400 font-normal sticky top-10 left-0 z-20 bg-slate-800/30 min-w-40" />
                   {Array.from({ length: daysInMonth }, (_, i) => (
-                    <th key={`dow-${i}`} className="border border-slate-600 px-0.5 py-0.5 text-center text-slate-400 font-normal text-xs w-12">{getDayOfWeek(i + 1)}</th>
+                    <th key={`dow-${i}`} className="border border-slate-600 px-0.5 py-0.5 text-center text-slate-400 font-normal text-xs w-12 sticky top-10 z-10 bg-slate-800/30">{getDayOfWeek(i + 1)}</th>
                   ))}
                 </tr>
               </thead>
@@ -362,7 +362,7 @@ export default function Vacations() {
                     const vacationRecord = getCurrentVacationRecord(employee.id);
                     return (
                     <tr key={employee.id} className="group transition-colors hover:bg-cyan-500/10">
-                      <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 bg-slate-800/30 group-hover:bg-cyan-950/50 whitespace-nowrap min-w-40 transition-colors">
+                      <td className="border border-slate-600 px-3 py-2 text-slate-300 font-medium sticky left-0 z-[5] bg-slate-800/30 group-hover:bg-cyan-950/50 whitespace-nowrap min-w-40 transition-colors">
                         <div>
                           <p className="text-white font-semibold text-xl">{employee.firstName} {employee.lastName}</p>
                           <p className="text-xs text-slate-400">SAP {employee.sap}</p>
