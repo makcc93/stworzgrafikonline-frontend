@@ -80,6 +80,7 @@ export const STORAGE_KEYS = {
   DRAFT_TAB_STATE: 'draftTabState',
   USER_PAGE_DATA: 'userPageData',
   MANAGER_DATA: 'managerData',
+  SELECTED_STORE_ID: 'selectedStoreId',
   DRAFT_PREFIX: 'draft',
   SCHEDULE_PREFIX: 'schedule',
 } as const;

@@ -78,10 +78,26 @@ export function AppProvider({ children }: AppProviderProps) {
     return storageUtils.get<ManagerData>('managerData', 'local') || null;
   });
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(() => {
-    // STORE_MANAGER ma przypisany sklep w tokenie — auto-select
+    // Priorytet 1: sklep zapamiętany w sessionStorage (np. wybrany ręcznie przez
+    // ADMIN/DIRECTOR w dropdownie) — dzięki temu odświeżenie strony (F5) zostaje
+    // na tym samym sklepie zamiast wracać do pierwszego z listy.
+    const storedSelected = storageUtils.get<number>(STORAGE_KEYS.SELECTED_STORE_ID, 'session');
+    if (storedSelected != null) return storedSelected;
+    // Priorytet 2: STORE_MANAGER ma przypisany sklep w tokenie — auto-select
     const stored = storageUtils.get<ManagerData>('managerData', 'local');
     return stored?.storeId ?? null;
   });
+
+  // Persist selectedStoreId do sessionStorage — przeżywa odświeżenie strony,
+  // ale (celowo) nie przeżywa zamknięcia karty/przeglądarki, ani nowej sesji
+  // logowania na innym koncie.
+  useEffect(() => {
+    if (selectedStoreId != null) {
+      storageUtils.set(STORAGE_KEYS.SELECTED_STORE_ID, selectedStoreId, 'session');
+    } else {
+      storageUtils.remove(STORAGE_KEYS.SELECTED_STORE_ID, 'session');
+    }
+  }, [selectedStoreId]);
 
   const [showUserPage, setShowUserPage] = useState(() => {
     const stored = storageUtils.get<boolean>(STORAGE_KEYS.SHOW_USER_PAGE, 'session');

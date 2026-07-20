@@ -88,8 +88,14 @@ export default function UserPage() {
           ? await storeService.getAll()
           : await storeService.getManagedStores();
         setAvailableStores(page.content);
-        if (!storesLoaded && !selectedStoreId && page.content.length > 0) {
-          setSelectedStoreId(page.content[0].id);
+        if (!storesLoaded && page.content.length > 0) {
+          const restoredStoreStillValid =
+            selectedStoreId != null && page.content.some((s) => s.id === selectedStoreId);
+          if (!selectedStoreId || !restoredStoreStillValid) {
+            // Brak zapamiętanego sklepu, albo sklep z poprzedniej sesji (przywrócony
+            // z sessionStorage) już nie jest dostępny dla tego użytkownika — wybierz pierwszy z listy.
+            setSelectedStoreId(page.content[0].id);
+          }
         }
         setStoresLoaded(true);
       } catch (e) {
