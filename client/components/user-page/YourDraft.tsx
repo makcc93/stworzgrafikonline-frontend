@@ -42,6 +42,7 @@ import { DraftStats } from './draft/DraftStats';
 import { MiniCalendar } from './draft/MiniCalendar';
 import { StatsCards } from './draft/StatsCards';
 import { useAppContext } from '@/context/AppContext';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
 import { DAYS_OF_WEEK, MONTHS } from '@/utils/calendar';
 import EmployeeHoursConfirmationStep from './EmployeeHoursConfirmationStep';
@@ -251,16 +252,19 @@ export default function YourDraft() {
   // ======================== EFFECTS ========================
 
   // Pobierz max obsadę i godziny otwarcia ze sklepu — przeładuj przy zmianie sklepu
+  const storeDetailsGuard = useRequestGuard();
   useEffect(() => {
     if (!currentStoreId) {
       setMaxStaffFromStore(100);
       setStoreOpeningHours(null);
       return;
     }
+    const token = storeDetailsGuard.start();
     const loadStoreDetails = async () => {
       // Osobne try/catch — błąd w details nie blokuje godzin otwarcia
       try {
         const details = await storeDetailsService.getByStoreId(currentStoreId);
+        if (!storeDetailsGuard.isCurrent(token)) return;
         if (details?.staffing) {
           const total = Object.entries(details.staffing)
             .filter(([key]) => key !== 'total')
@@ -268,17 +272,18 @@ export default function YourDraft() {
           setMaxStaffFromStore(Math.max(total, 1));
         }
       } catch {
-        setMaxStaffFromStore(100);
+        if (storeDetailsGuard.isCurrent(token)) setMaxStaffFromStore(100);
       }
       try {
         const hours = await storeOpeningHoursService.getAll(currentStoreId);
+        if (!storeDetailsGuard.isCurrent(token)) return;
         setStoreOpeningHours(hours);
       } catch {
-        setStoreOpeningHours(null);
+        if (storeDetailsGuard.isCurrent(token)) setStoreOpeningHours(null);
       }
     };
     loadStoreDetails();
-  }, [currentStoreId]);
+  }, [currentStoreId, storeDetailsGuard]);
 
   // Pobierz konfiguracje okresów rozliczenia jednorazowo
   useEffect(() => {
@@ -291,6 +296,7 @@ export default function YourDraft() {
    * Dane kontekstowe okresu: pracownicy, urlopy, delegacje, normy miesięczne.
    * Przeładowuje się przy zmianie sklepu LUB miesiąca.
    */
+  const periodDataGuard = useRequestGuard();
   useEffect(() => {
     if (!currentStoreId) {
       setEmployees([]);
@@ -300,6 +306,7 @@ export default function YourDraft() {
       return;
     }
 
+    const token = periodDataGuard.start();
     const loadPeriodData = async () => {
       const backendMonth = month + 1;
 
@@ -310,6 +317,8 @@ export default function YourDraft() {
           draftService.getMonthlyNorm(currentStoreId, year, backendMonth),
         ]);
 
+        if (!periodDataGuard.isCurrent(token)) return; // sklep/miesiąc zmienił się w międzyczasie — porzuć
+
         setEmployees(empResponse.content);
         setMonthlyNormData(normData);
 
@@ -319,6 +328,7 @@ export default function YourDraft() {
         );
         setTotalVacationDays(vacDays);
       } catch (err) {
+        if (!periodDataGuard.isCurrent(token)) return;
         console.warn('Could not load period data:', err);
       }
 
@@ -327,20 +337,22 @@ export default function YourDraft() {
           year,
           month: backendMonth,
         });
+        if (!periodDataGuard.isCurrent(token)) return;
         const delDays = delResponse.content.reduce(
           (sum: number, d: any) => sum + d.monthlyDelegation.filter((v: number) => v === 1).length,
           0
         );
         setTotalDelegationDays(delDays);
       } catch {
-        setTotalDelegationDays(0);
+        if (periodDataGuard.isCurrent(token)) setTotalDelegationDays(0);
       }
     };
 
     loadPeriodData();
-  }, [currentStoreId, year, month]);
+  }, [currentStoreId, year, month, periodDataGuard]);
 
   // Załaduj drafty przy zmianie sklepu LUB miesiąca
+  const draftsGuard = useRequestGuard();
   useEffect(() => {
     if (!currentStoreId) {
       setDrafts([]);
@@ -348,10 +360,12 @@ export default function YourDraft() {
       return;
     }
 
+    const token = draftsGuard.start();
     const loadDrafts = async () => {
       try {
         setLoading(true);
         setError(null);
+        setDrafts([]); // czyścimy od razu — bez tego przez chwilę widać drafty poprzedniego sklepu
         // Zresetuj zaznaczenie przy zmianie sklepu
         setSelectedDate(null);
         setActiveMode('templates');
@@ -362,18 +376,20 @@ export default function YourDraft() {
         const endDate = formatDateForBackend(lastDay);
 
         const response = await draftService.getByDateRange(currentStoreId, startDate, endDate);
+        if (!draftsGuard.isCurrent(token)) return; // sklep/miesiąc zmienił się w międzyczasie — porzuć
         setDrafts(response.content || []);
       } catch (err) {
+        if (!draftsGuard.isCurrent(token)) return;
         console.error('API Error podczas pobierania grafików:', err);
         setDrafts([]);
         toast.error('Nie udało się pobrać grafików z serwera.');
       } finally {
-        setLoading(false);
+        if (draftsGuard.isCurrent(token)) setLoading(false);
       }
     };
 
     loadDrafts();
-  }, [currentStoreId, year, month]);
+  }, [currentStoreId, year, month, draftsGuard]);
 
   // ======================== HELPERS ========================
 

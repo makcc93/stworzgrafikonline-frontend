@@ -13,6 +13,7 @@ import SchedulePreparationModal from './SchedulePreparationModal';
 import ScheduleViewer from './ScheduleViewer';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
 import { sumScheduleDetailHours } from '@/utils/shiftNormalize';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 import {
   Area,
   AreaChart,
@@ -78,12 +79,20 @@ export default function YourSchedule() {
 
   const resolvedStoreId = (selectedStoreId ?? parseInt(storeId as string, 10)) || 1;
 
+  // Zabezpieczenia przed race condition — patrz komentarz w useRequestGuard.ts
+  const schedulesGuard = useRequestGuard();
+  const yearlyHoursGuard = useRequestGuard();
+
   // ── Fetch schedules ───────────────────────────────────────────────────────
   const fetchSchedules = useCallback(async () => {
     if (!resolvedStoreId) return;
+    const token = schedulesGuard.start();
     setLoadingSchedules(true);
+    // Czyścimy od razu — żeby podczas ładowania nie pokazywać danych poprzedniego sklepu
+    setSchedules([]);
     try {
       const data = await scheduleService.getAll(resolvedStoreId);
+      if (!schedulesGuard.isCurrent(token)) return; // odpowiedź nieaktualna (sklep zmienił się w międzyczasie) — porzuć
       const content: ResponseScheduleDTO[] = Array.isArray(data)
         ? data
         : (data?.content ?? []);
@@ -101,15 +110,27 @@ export default function YourSchedule() {
         }))
       );
     } catch (e) {
+      if (!schedulesGuard.isCurrent(token)) return;
       console.error('[YourSchedule] Failed to load schedules', e);
     } finally {
-      setLoadingSchedules(false);
+      if (schedulesGuard.isCurrent(token)) setLoadingSchedules(false);
     }
-  }, [resolvedStoreId]);
+  }, [resolvedStoreId, schedulesGuard]);
 
   useEffect(() => {
     fetchSchedules();
   }, [fetchSchedules]);
+
+  // Zmiana sklepu w dropdownie (admin/dyrektor) — zamykamy wszystkie widoki
+  // odwołujące się do poprzedniego sklepu (podgląd grafiku, modal tworzenia,
+  // dialog usuwania), żeby nie zostawić na ekranie danych z innego sklepu.
+  useEffect(() => {
+    setViewerState(null);
+    setIsModalOpen(false);
+    setSelectedMonth(null);
+    setDeleteConfirm(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedStoreId]);
 
   // ── Fetch yearly hours chart data ─────────────────────────────────────────
   // Korzysta z już załadowanego stanu `schedules` (0-indexed miesiące)
@@ -117,7 +138,9 @@ export default function YourSchedule() {
   // bez osobnego wywołania getAll ani budowania shiftMap.
   const fetchYearlyHours = useCallback(async () => {
     if (!resolvedStoreId) return;
+    const token = yearlyHoursGuard.start();
     setLoadingChart(true);
+    setYearlyHoursData([]); // czyścimy od razu — bez tego przez chwilę widać wykres z poprzedniego sklepu
     try {
       // Filtrujemy schedules dla wybranego roku — miesiące są 0-indexed w stanie
       const schedulesForYear = schedules.filter(
@@ -127,6 +150,7 @@ export default function YourSchedule() {
       const results: { month: string; monthIndex: number; hours: number }[] = [];
 
       for (let m = 0; m < 12; m++) {
+        if (!yearlyHoursGuard.isCurrent(token)) return; // sklep zmienił się w trakcie pętli — przerywamy
         const entry = schedulesForYear.find((s) => s.month === m);
 
         if (!entry?.scheduleId) {
@@ -142,6 +166,7 @@ export default function YourSchedule() {
             undefined,
             { page: 0, size: 5000 }
           );
+          if (!yearlyHoursGuard.isCurrent(token)) return;
           const details: ResponseScheduleDetailsDTO[] = Array.isArray(detailsPage)
             ? detailsPage
             : (detailsPage?.content ?? []);
@@ -154,13 +179,15 @@ export default function YourSchedule() {
         results.push({ month: months[m].substring(0, 3), monthIndex: m, hours: totalHours });
       }
 
+      if (!yearlyHoursGuard.isCurrent(token)) return;
       setYearlyHoursData(results);
     } catch (e) {
+      if (!yearlyHoursGuard.isCurrent(token)) return;
       console.error('[YourSchedule] Failed to load yearly hours chart', e);
     } finally {
-      setLoadingChart(false);
+      if (yearlyHoursGuard.isCurrent(token)) setLoadingChart(false);
     }
-  }, [resolvedStoreId, selectedYear, schedules]);
+  }, [resolvedStoreId, selectedYear, schedules, yearlyHoursGuard]);
 
   useEffect(() => {
     fetchYearlyHours();

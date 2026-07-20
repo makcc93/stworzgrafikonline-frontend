@@ -30,10 +30,14 @@ import {
 } from '@/types/employee-proposal.types';
 import { getLatestDraftRecord } from '@/utils/draft.utils';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 
 export default function EmployeeProposals() {
   const { selectedStoreId } = useAppContext();
   const currentStoreId = selectedStoreId ?? 0;
+  const employeesGuard = useRequestGuard();
+  const proposalsGuard = useRequestGuard();
+  const yearlyGuard = useRequestGuard();
 
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
@@ -98,20 +102,24 @@ export default function EmployeeProposals() {
 
   // Load employees
   useEffect(() => {
+    const token = employeesGuard.start();
     const loadEmployees = async () => {
       try {
         setLoadingEmployees(true);
+        setEmployees([]); // czyścimy od razu — bez tego przez chwilę widać pracowników poprzedniego sklepu
         const response = await employeeService.getAll(currentStoreId);
+        if (!employeesGuard.isCurrent(token)) return; // sklep zmienił się w międzyczasie — porzuć odpowiedź
         setEmployees(response.content);
       } catch (error) {
+        if (!employeesGuard.isCurrent(token)) return;
         console.error('Error loading employees:', error);
         toast.error('Nie udało się załadować pracowników');
       } finally {
-        setLoadingEmployees(false);
+        if (employeesGuard.isCurrent(token)) setLoadingEmployees(false);
       }
     };
     loadEmployees();
-  }, [currentStoreId]);
+  }, [currentStoreId, employeesGuard]);
 
   // Load shift definitions (once on mount).
   // The backend paginates – default page size may be as small as 5.
@@ -176,9 +184,12 @@ export default function EmployeeProposals() {
   useEffect(() => {
     if (selectedMonth === null) return;
 
+    const token = proposalsGuard.start();
     const loadProposals = async () => {
       try {
         setLoadingProposals(true);
+        setDaysOff([]);
+        setShifts([]);
         const backendMonth = selectedMonth + 1;
 
         const startDate = new Date(selectedYear, selectedMonth, 1);
@@ -195,18 +206,21 @@ export default function EmployeeProposals() {
           }),
         ]);
 
+        if (!proposalsGuard.isCurrent(token)) return; // sklep/miesiąc zmienił się w międzyczasie — porzuć
+
         setDaysOff(daysOffResponse.content);
         setShifts(shiftsResponse.content);
       } catch (error) {
+        if (!proposalsGuard.isCurrent(token)) return;
         console.error('Error loading proposals:', error);
         toast.error('Nie udało się załadować propozycji');
       } finally {
-        setLoadingProposals(false);
+        if (proposalsGuard.isCurrent(token)) setLoadingProposals(false);
       }
     };
 
     loadProposals();
-  }, [currentStoreId, selectedYear, selectedMonth]);
+  }, [currentStoreId, selectedYear, selectedMonth, proposalsGuard]);
 
   // Clear pending changes when month/year changes
   useEffect(() => {
@@ -219,11 +233,14 @@ export default function EmployeeProposals() {
   // potrzebne do "Ostatnia zmiana" na kafelkach miesięcy.
   useEffect(() => {
     if (!currentStoreId) return;
+    const token = yearlyGuard.start();
     const loadYearlyLastModified = async () => {
       setLoadingYearlyLastModified(true);
+      setYearlyLastModifiedRecords(Array(12).fill(null));
       try {
         const results: (ResponseEmployeeProposalDaysOffDTO | ResponseEmployeeProposalShiftsDTO | null)[] = [];
         for (let m = 1; m <= 12; m++) {
+          if (!yearlyGuard.isCurrent(token)) return; // sklep/rok zmienił się w trakcie pętli
           const startDate = new Date(selectedYear, m - 1, 1);
           const endDate = new Date(selectedYear, m, 0);
           const [daysOffRes, shiftsRes] = await Promise.all([
@@ -237,15 +254,17 @@ export default function EmployeeProposals() {
           // niezależny od innych miesięcy.
           results.push(getLatestDraftRecord([...daysOffRes.content, ...shiftsRes.content]));
         }
+        if (!yearlyGuard.isCurrent(token)) return;
         setYearlyLastModifiedRecords(results);
       } catch (e) {
+        if (!yearlyGuard.isCurrent(token)) return;
         console.error('Błąd ładowania dat ostatniej zmiany propozycji:', e);
       } finally {
-        setLoadingYearlyLastModified(false);
+        if (yearlyGuard.isCurrent(token)) setLoadingYearlyLastModified(false);
       }
     };
     loadYearlyLastModified();
-  }, [currentStoreId, selectedYear]);
+  }, [currentStoreId, selectedYear, yearlyGuard]);
 
   // Najnowszy rekord (z autorem) spośród wszystkich propozycji (dni wolne + zmiany)
   // w aktualnie otwartym miesiącu — wyświetlany w nagłówku karty miesiąca jako "Ostatnia zmiana".

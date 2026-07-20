@@ -8,7 +8,15 @@ type PageState = 'landing' | 'login' | 'user';
 
 export default function Index() {
   const { showUserPage, setShowUserPage, setIsLoggedIn, isLoggedIn } = useAppContext();
-  const [currentPage, setCurrentPage] = useState<PageState>('landing');
+  // WAŻNE: isLoggedIn (localStorage) i showUserPage (sessionStorage) są celowo
+  // persystowane w AppContext właśnie po to, żeby przetrwać odświeżenie strony.
+  // Musimy je odczytać już w inicjalizatorze useState — bez tego currentPage
+  // zawsze startowało od 'landing' przy każdym mount (czyli też po F5), mimo
+  // że użytkownik był cały czas zalogowany, i strona "resetowała się" do
+  // ekranu startowego zamiast wracać tam, gdzie użytkownik był.
+  const [currentPage, setCurrentPage] = useState<PageState>(() =>
+    isLoggedIn && showUserPage ? 'user' : 'landing'
+  );
 
   // Handle logout - redirect to landing
   useEffect(() => {

@@ -13,6 +13,7 @@ import {
 } from '@/utils/employee-delegation.utils';
 import { getLatestDraftRecord } from '@/utils/draft.utils';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 
 export default function Delegations() {
   const { selectedStoreId } = useAppContext();
@@ -41,39 +42,51 @@ export default function Delegations() {
     'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
   ];
 
+  const employeesGuard = useRequestGuard();
+  const delegationsGuard = useRequestGuard();
+  const yearlyGuard = useRequestGuard();
+
   useEffect(() => {
+    const token = employeesGuard.start();
     const loadEmployees = async () => {
       try {
         setEmployeesLoading(true);
+        setEmployees([]); // czyścimy od razu — bez tego przez chwilę widać pracowników poprzedniego sklepu
         const response = await employeeService.getAll(currentStoreId);
+        if (!employeesGuard.isCurrent(token)) return; // sklep zmienił się w międzyczasie — porzuć odpowiedź
         setEmployees(response.content);
       } catch {
+        if (!employeesGuard.isCurrent(token)) return;
         toast.error('Nie udało się załadować pracowników');
       } finally {
-        setEmployeesLoading(false);
+        if (employeesGuard.isCurrent(token)) setEmployeesLoading(false);
       }
     };
     loadEmployees();
-  }, [currentStoreId]);
+  }, [currentStoreId, employeesGuard]);
 
   useEffect(() => {
     if (selectedMonth === null) return;
+    const token = delegationsGuard.start();
     const loadDelegations = async () => {
       try {
         setLoading(true);
+        setDelegations([]);
         const response = await delegationService.getByCriteria(currentStoreId, {
           year: selectedYear,
           month: selectedMonth + 1,
         });
+        if (!delegationsGuard.isCurrent(token)) return;
         setDelegations(response.content);
       } catch {
+        if (!delegationsGuard.isCurrent(token)) return;
         toast.error('Nie udało się załadować delegacji');
       } finally {
-        setLoading(false);
+        if (delegationsGuard.isCurrent(token)) setLoading(false);
       }
     };
     loadDelegations();
-  }, [currentStoreId, selectedYear, selectedMonth]);
+  }, [currentStoreId, selectedYear, selectedMonth, delegationsGuard]);
 
   useEffect(() => {
     setPendingChanges(new Map());
@@ -83,25 +96,30 @@ export default function Delegations() {
   // Ładuje rekord ostatniej zmiany dla każdego miesiąca roku — potrzebne do "Ostatnia zmiana" na kafelkach
   useEffect(() => {
     if (!currentStoreId) return;
+    const token = yearlyGuard.start();
     const loadYearlyLastModified = async () => {
       setLoadingYearly(true);
+      setYearlyLastModifiedRecords(Array(12).fill(null));
       try {
         const results: (ResponseEmployeeDelegationDTO | null)[] = [];
         for (let m = 1; m <= 12; m++) {
+          if (!yearlyGuard.isCurrent(token)) return; // sklep/rok zmienił się w trakcie pętli
           const res = await delegationService.getByCriteria(currentStoreId, { year: selectedYear, month: m });
           // res.content jest już przefiltrowane po year+month, więc rekord jest
           // niezależny od innych miesięcy.
           results.push(getLatestDraftRecord(res.content));
         }
+        if (!yearlyGuard.isCurrent(token)) return;
         setYearlyLastModifiedRecords(results);
       } catch (e) {
+        if (!yearlyGuard.isCurrent(token)) return;
         console.error('Błąd ładowania dat ostatniej zmiany delegacji:', e);
       } finally {
-        setLoadingYearly(false);
+        if (yearlyGuard.isCurrent(token)) setLoadingYearly(false);
       }
     };
     loadYearlyLastModified();
-  }, [currentStoreId, selectedYear]);
+  }, [currentStoreId, selectedYear, yearlyGuard]);
 
   // Najnowszy rekord (z autorem) spośród wszystkich delegacji w aktualnie otwartym miesiącu —
   // wyświetlany w nagłówku karty miesiąca jako "Ostatnia zmiana".

@@ -17,6 +17,7 @@ import type { ResponseSpecialWorkNormDTO } from '@/types/special-work-norm.types
 import { employeeService, positionService, specialWorkNormService } from '@/services/api-provider';
 import { AddEmployeeModal } from '@/components/modals/AddEmployeeModal';
 import { useAppContext } from '@/context/AppContext';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 
 export default function YourTeam() {
   // ─── Pobierz aktualnie wybrany sklep z kontekstu ───────────
@@ -126,6 +127,7 @@ export default function YourTeam() {
   }, []);
 
   // Załaduj pracowników po zmianie sklepu
+  const employeesGuard = useRequestGuard();
   useEffect(() => {
     // Brak sklepu → wyczyść listę i nie ładuj
     if (!currentStoreId) {
@@ -135,31 +137,35 @@ export default function YourTeam() {
     }
     if (loadingPositions || positions.size === 0) return;
 
+    const token = employeesGuard.start();
     const loadData = async () => {
       try {
         setLoading(true);
         setError(null);
+        setEmployees([]); // czyścimy od razu — bez tego przez chwilę widać pracowników poprzedniego sklepu
         // Zamknij otwarte edycje przy zmianie sklepu
         setEditingId(null);
         setExpandedId(null);
 
         const response = await employeeService.getAll(currentStoreId);
+        if (!employeesGuard.isCurrent(token)) return; // sklep zmienił się w międzyczasie — porzuć odpowiedź
         const employeesWithPositions = response.content.map((emp) => ({
           ...emp,
           positionName: getPositionName(emp),
         }));
         setEmployees(employeesWithPositions);
       } catch (err) {
+        if (!employeesGuard.isCurrent(token)) return;
         const errorMessage = err instanceof Error ? err.message : 'Nie udało się załadować pracowników';
         setError(errorMessage);
         toast.error(errorMessage);
       } finally {
-        setLoading(false);
+        if (employeesGuard.isCurrent(token)) setLoading(false);
       }
     };
 
     loadData();
-  }, [currentStoreId, loadingPositions, positions]);
+  }, [currentStoreId, loadingPositions, positions, employeesGuard]);
 
   // Wczytaj zapisaną kolejność i tryb sortowania dla wybranego sklepu.
   // Wyłącznie frontend/localStorage - przetrwa odświeżenie i wylogowanie

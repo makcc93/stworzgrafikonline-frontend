@@ -3,6 +3,7 @@ import { Users, Save, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { storeDeliveryService, employeeService } from '@/services/api-provider';
 import { useAppContext } from '@/context/AppContext';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 import {
   DayOfWeek,
   shiftArrayToHours,
@@ -173,16 +174,26 @@ export default function StoreDelivery() {
   ];
 
   // ── Załaduj dane ─────────────────────────────────────────────
+  const loadDataGuard = useRequestGuard();
   const loadData = useCallback(async () => {
     if (!effectiveStoreId) return;
+    const token = loadDataGuard.start();
     setLoadingData(true);
     setError(null);
+    // Czyścimy od razu — bez tego przez chwilę widać dane poprzedniego sklepu
+    setEmployees([]);
+    setSchedule(buildDefaultSchedule());
+    setSavedSchedule(buildDefaultSchedule());
+    setSelectedEmployeeId(null);
+    setSavedEmployeeId(null);
     try {
       const [delivery, employeesPage] = await Promise.all([
         storeDeliveryService.get(effectiveStoreId),
         // Pobieramy wszystkich aktywnych pracowników sklepu
         employeeService.getAll(effectiveStoreId, { enable: true }),
       ]);
+
+      if (!loadDataGuard.isCurrent(token)) return; // sklep zmienił się w międzyczasie — porzuć odpowiedź
 
       setHasDedicatedWarehouseman(delivery.hasDedicatedWarehouseman ?? false);
       setSelectedEmployeeId(delivery.primaryEmployeeId ?? null);
@@ -198,12 +209,13 @@ export default function StoreDelivery() {
 
       setEmployees(employeesPage.content);
     } catch (err: any) {
+      if (!loadDataGuard.isCurrent(token)) return;
       console.error('[StoreDelivery] loadData error:', err);
       setError(err?.message ?? 'Błąd ładowania danych');
     } finally {
-      setLoadingData(false);
+      if (loadDataGuard.isCurrent(token)) setLoadingData(false);
     }
-  }, [effectiveStoreId]);
+  }, [effectiveStoreId, loadDataGuard]);
 
   useEffect(() => {
     loadData();

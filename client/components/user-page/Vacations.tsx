@@ -14,6 +14,7 @@ import {
 } from '@/utils/employee-vacation.utils';
 import { getLatestDraftRecord } from '@/utils/draft.utils';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
+import { useRequestGuard } from '@/hooks/useRequestGuard';
 
 export default function Vacations() {
   const { selectedStoreId } = useAppContext();
@@ -44,50 +45,65 @@ export default function Vacations() {
 
   const years = Array.from({ length: 10 }, (_, i) => now.getFullYear() - 5 + i);
 
+  const employeesGuard = useRequestGuard();
+  const vacationsGuard = useRequestGuard();
+  const yearlyGuard = useRequestGuard();
+
   useEffect(() => {
+    const token = employeesGuard.start();
     const loadEmployees = async () => {
       try {
         setEmployeesLoading(true);
+        setEmployees([]); // czyścimy od razu — bez tego przez chwilę widać pracowników poprzedniego sklepu
         const response = await employeeService.getAll(currentStoreId);
+        if (!employeesGuard.isCurrent(token)) return; // sklep zmienił się w międzyczasie — porzuć odpowiedź
         setEmployees(response.content);
       } catch (error) {
+        if (!employeesGuard.isCurrent(token)) return;
         console.error('Error loading employees:', error);
         toast.error('Nie udało się załadować pracowników');
       } finally {
-        setEmployeesLoading(false);
+        if (employeesGuard.isCurrent(token)) setEmployeesLoading(false);
       }
     };
     loadEmployees();
-  }, [currentStoreId]);
+  }, [currentStoreId, employeesGuard]);
 
   useEffect(() => {
     if (selectedMonth === null) return;
+    const token = vacationsGuard.start();
     const loadVacations = async () => {
       try {
         setLoading(true);
+        setVacations([]);
         const backendMonth = selectedMonth + 1;
         const response = await vacationService.getByCriteria(currentStoreId, {
           year: selectedYear,
           month: backendMonth,
         });
+        if (!vacationsGuard.isCurrent(token)) return;
         setVacations(response.content);
       } catch (error) {
+        if (!vacationsGuard.isCurrent(token)) return;
         console.error('Error loading vacations:', error);
         toast.error('Nie udało się załadować urlopów');
       } finally {
-        setLoading(false);
+        if (vacationsGuard.isCurrent(token)) setLoading(false);
       }
     };
     loadVacations();
-  }, [currentStoreId, selectedYear, selectedMonth]);
+  }, [currentStoreId, selectedYear, selectedMonth, vacationsGuard]);
 
   useEffect(() => {
     if (!currentStoreId) return;
+    const token = yearlyGuard.start();
     const loadYearlyData = async () => {
       setLoadingYearly(true);
+      setYearlyVacationData([]);
       try {
         const results: { month: string; monthIndex: number; total: number; lastModifiedRecord: ResponseEmployeeVacationDTO | null }[] = [];
         for (let m = 1; m <= 12; m++) {
+          if (!yearlyGuard.isCurrent(token)) return; // sklep/rok zmienił się w trakcie pętli
           const res = await vacationService.getByCriteria(currentStoreId, {
             year: selectedYear,
             month: m,
@@ -99,16 +115,18 @@ export default function Vacations() {
           const lastModifiedRecord = getLatestDraftRecord(res.content);
           results.push({ month: months[m - 1].substring(0, 3), monthIndex: m - 1, total, lastModifiedRecord });
         }
+        if (!yearlyGuard.isCurrent(token)) return;
         setYearlyVacationData(results);
       } catch (e) {
+        if (!yearlyGuard.isCurrent(token)) return;
         console.error('Błąd ładowania danych wykresu:', e);
       } finally {
-        setLoadingYearly(false);
+        if (yearlyGuard.isCurrent(token)) setLoadingYearly(false);
       }
     };
     loadYearlyData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStoreId, selectedYear, chartRefreshKey]);
+  }, [currentStoreId, selectedYear, chartRefreshKey, yearlyGuard]);
 
   useEffect(() => {
     setPendingChanges(new Map());
