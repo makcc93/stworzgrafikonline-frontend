@@ -166,9 +166,51 @@ export default function ScheduleViewer({
         empDayDetail.get(d.employeeId)!.set(dayNum, d);
       }
 
-      // 4. Budujemy wiersze tabeli
-      const builtRows: EmployeeRow[] = employees
-        .filter((e) => e.enable)
+      // 4. Budujemy listę pracowników do wyświetlenia: suma (a) obecnie aktywnych
+      //    pracowników (żeby pokazać ich nawet z pustym wierszem, jeśli nie mają zmian)
+      //    oraz (b) KAŻDEGO, kto ma realne dane w TYM konkretnym grafiku — nawet jeśli
+      //    od czasu wygenerowania grafiku został wyłączony (enable=false) albo usunięty.
+      //    Bez (b) osoba, która np. odeszła po wygenerowaniu grafiku, znikałaby z ekranu,
+      //    a jej godziny nadal byłyby w eksportowanym PDF/Excel — stąd rozjazd sum.
+      const employeeById = new Map<number, ResponseEmployeeDTO>(employees.map((e) => [e.id, e]));
+      const enabledEmployees = employees.filter((e) => e.enable);
+      const employeeIdsWithData = Array.from(empDayDetail.keys());
+
+      const rowSubjects: ResponseEmployeeDTO[] = [...enabledEmployees];
+      const seenIds = new Set(rowSubjects.map((e) => e.id));
+      for (const empId of employeeIdsWithData) {
+        if (seenIds.has(empId)) continue;
+        seenIds.add(empId);
+        const found = employeeById.get(empId);
+        // Placeholder dla pracownika, który ma dane w grafiku, ale nie ma go już
+        // w bieżącej liście pracowników sklepu (np. usunięty) — pokazujemy z ID,
+        // żeby godziny nie "zniknęły" bez śladu z podsumowania.
+        rowSubjects.push(
+          found ?? {
+            id: empId,
+            firstName: 'Pracownik',
+            lastName: `#${empId}`,
+            sap: 0,
+            storeId,
+            positionId: 0,
+            enable: false,
+            canOperateCheckout: false,
+            canOperateCredit: false,
+            canOpenCloseStore: false,
+            canOperateDelivery: false,
+            warehouseman: false,
+            seller: false,
+            manager: false,
+            cashier: false,
+            pok: false,
+            createdAt: '',
+            updatedAt: null,
+          }
+        );
+      }
+
+      // 5. Budujemy wiersze tabeli
+      const builtRows: EmployeeRow[] = rowSubjects
         .map((employee) => {
           const dayDetail = empDayDetail.get(employee.id) ?? new Map<number, ResponseScheduleDetailsDTO>();
           let totalHours   = 0;
@@ -190,9 +232,14 @@ export default function ScheduleViewer({
             // ── Zliczanie godzin ──────────────────────────────────────────
             switch (detail.shiftCode) {
               case 'WORK':
-              case 'WORK_BY_PROPOSAL': {
-                const len = computeShiftHours(detail.startHour, detail.endHour);
-                totalHours += len;
+              case 'WORK_BY_PROPOSAL':
+              case 'DELEGATION': {
+                // Delegacja to też dzień pracy (u innego pracodawcy/w innej lokalizacji) —
+                // liczymy ją tak samo jak zwykłą zmianę. Jeśli shift ma realne startHour/endHour,
+                // liczymy z nich; jeśli to sentinel 00:00→00:00 (delegacja bez godzin w grafiku),
+                // fallback na defaultHours z ShiftTypeConfig — tak jak przy urlopie/L4.
+                const fromShift = computeShiftHours(detail.startHour, detail.endHour);
+                totalHours += fromShift > 0 ? fromShift : (detail.defaultHours ?? 0);
                 workDays   += 1;
                 if (weekend) weekendDays += 1;
                 break;
@@ -208,7 +255,7 @@ export default function ScheduleViewer({
                 break;
               }
               default:
-                // DAY_OFF, DELEGATION — nie liczą do godzin
+                // DAY_OFF — nie liczy się do godzin
                 break;
             }
 

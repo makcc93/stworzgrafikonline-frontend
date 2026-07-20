@@ -116,15 +116,18 @@ export function sumScheduleDetailHours(
 ): number {
   let total = 0;
   for (const d of details) {
-    if (d.shiftCode === 'WORK' || d.shiftCode === 'WORK_BY_PROPOSAL') {
-      total += computeShiftHours(d.startHour, d.endHour);
+    if (d.shiftCode === 'WORK' || d.shiftCode === 'WORK_BY_PROPOSAL' || d.shiftCode === 'DELEGATION') {
+      // Delegacja liczy się jak dzień pracy: realne godziny zmiany, a jeśli shift to
+      // sentinel 00:00→00:00 (delegacja bez godzin w grafiku) — fallback na defaultHours.
+      const fromShift = computeShiftHours(d.startHour, d.endHour);
+      total += fromShift > 0 ? fromShift : (d.defaultHours ?? 0);
     } else if (d.shiftCode === 'VACATION' || d.shiftCode === 'SICK_LEAVE') {
       // Dla urlopu/L4 shift ma 00:00→00:00 — prawdziwa wartość jest w defaultHours (z bazy)
       if (d.defaultHours != null) {
         total += d.defaultHours;
       }
     }
-    // DAY_OFF, DELEGATION — nie liczą do godzin
+    // DAY_OFF — nie liczy się do godzin
   }
   return total;
 }
