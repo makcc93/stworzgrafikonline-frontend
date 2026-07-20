@@ -4,9 +4,11 @@
  * Follows SRP - context only manages application-wide state
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import { toast } from 'sonner';
 import { TabType, UserPageState, StoreHours, DraftState, ManagerData } from '@/types';
 import { storageUtils, STORAGE_KEYS } from '@/utils/storage';
+import { SESSION_EXPIRED_EVENT } from '@/config/http.client';
 
 interface AppContextType {
   // Navigation state
@@ -153,6 +155,30 @@ export function AppProvider({ children }: AppProviderProps) {
     setSelectedStoreId(null);
     setShowUserPage(false);
   };
+
+  // handleLogout jest redefiniowany przy każdym renderze (zamyka nad aktualnym
+  // stanem, żeby USER_PAGE_DATA zapisane przy wylogowaniu było aktualne).
+  // Ref pozwala nasłuchiwaczowi zdarzenia zawsze wołać najświeższą wersję,
+  // mimo że sam listener rejestrujemy tylko raz (przy montowaniu).
+  const handleLogoutRef = useRef(handleLogout);
+  handleLogoutRef.current = handleLogout;
+
+  // Globalna obsługa wygaśnięcia sesji — patrz komentarz w http.client.ts.
+  // Reaguje na zdarzenie SESSION_EXPIRED_EVENT wysyłane przez httpClient
+  // (i serwisy korzystające z fetch bezpośrednio) przy odpowiedzi 401:
+  // czyści sesję, informuje użytkownika czytelnym komunikatem i przekierowuje
+  // do strony głównej / logowania. Twarde przekierowanie (zamiast routingu
+  // po stanie) gwarantuje, że zadziała niezależnie od tego, na której
+  // podstronie (np. /admin, /schedule/...) użytkownika akurat zastał wygasły token.
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      handleLogoutRef.current();
+      toast.error('Sesja wygasła. Zaloguj się ponownie.', { id: 'session-expired' });
+      window.location.href = '/';
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+  }, []);
 
   const value: AppContextType = {
     activeTab,

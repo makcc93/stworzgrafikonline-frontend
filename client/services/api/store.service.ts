@@ -10,6 +10,7 @@ import type {
   StoreSpecificationDTO,
   StoreNameAndCodeDTO,
 } from '@/types/YourStore.types';
+import { notifySessionExpired } from '@/config/http.client';
 
 /**
  * Pagination metadata for paginated responses
@@ -88,6 +89,12 @@ function buildHeaders(includeAuth: boolean = true): HeadersInit {
  * Parse error response from API
  */
 async function parseError(response: Response): Promise<ApiError> {
+  // Wygasła/nieprawidłowa sesja — powiadom globalnie, żeby AppContext
+  // wylogował użytkownika i przekierował do logowania (patrz http.client.ts).
+  if (response.status === 401) {
+    notifySessionExpired();
+  }
+
   const contentType = response.headers.get('content-type');
   let errorData: any = {};
 

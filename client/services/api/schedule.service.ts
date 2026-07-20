@@ -10,7 +10,7 @@ import type {
   PaginationParams,
 } from '@/types/schedule.types';
 import { API_CONFIG, buildUrl } from '@/config/api.config';
-import { httpClient } from '@/config/http.client';
+import { httpClient, notifySessionExpired } from '@/config/http.client';
 
 /**
  * Schedule API Service
@@ -133,6 +133,10 @@ exportFromDatabase: async (storeId: number, scheduleId: number): Promise<{ downl
   );
 
   if (!response.ok) {
+    if (response.status === 401) {
+      notifySessionExpired();
+      throw new Error('Sesja wygasła — zaloguj się ponownie.');
+    }
     const msg = await response.text().catch(() => response.statusText);
     throw new Error(msg || response.statusText);
   }
@@ -158,6 +162,10 @@ exportFromDatabase: async (storeId: number, scheduleId: number): Promise<{ downl
 	  );
 
 	  if (!response.ok) {
+	    if (response.status === 401) {
+	      notifySessionExpired();
+	      throw new Error('Sesja wygasła — zaloguj się ponownie.');
+	    }
 	    const msg = await response.text().catch(() => response.statusText);
 	    throw new Error(msg || response.statusText);
 	  }
@@ -184,6 +192,10 @@ exportFromDatabase: async (storeId: number, scheduleId: number): Promise<{ downl
 	  );
 
 	  if (!response.ok) {
+	    if (response.status === 401) {
+	      notifySessionExpired();
+	      throw new Error('Sesja wygasła — zaloguj się ponownie.');
+	    }
 	    const msg = await response.text().catch(() => response.statusText);
 	    throw new Error(msg || response.statusText);
 	  }
