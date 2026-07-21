@@ -127,7 +127,7 @@ function ModeTabs({
     <div
       role="tablist"
       aria-label="Tryb zarządzania draftem"
-      className="relative flex w-full sm:w-auto bg-slate-900/60 border border-slate-700/70 rounded-xl p-1 gap-1 overflow-x-auto"
+      className="relative flex w-full bg-slate-900/60 border border-slate-700/70 rounded-xl p-1 gap-1"
     >
       <div
         className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 shadow-lg shadow-blue-900/40 transition-transform duration-300 ease-out"
@@ -146,7 +146,7 @@ function ModeTabs({
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(tab.id)}
-            className={`relative z-10 flex items-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm whitespace-nowrap transition-colors ${
+            className={`relative z-10 flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg font-semibold text-sm whitespace-nowrap transition-colors ${
               isActive ? 'text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
