@@ -3,9 +3,11 @@ import { X, Loader, ChevronLeft, ChevronRight, Download, FileText, Clock, Calend
 import { toast } from 'sonner';
 import { scheduleService } from '@/services/api/schedule.service';
 import { employeeService } from '@/services/api-provider';
+import { storeDeliveryService } from '@/services/api/store-delivery.service';
 import { computeShiftHours, normalizeToTimeString } from '@/utils/shiftNormalize';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
 import type { ResponseScheduleDetailsDTO, ShiftCode } from '@/types/schedule.types';
+import type { ResponseStoreDeliveryDTO } from '@/types/store-delivery.types';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,6 +28,7 @@ interface ShiftCell {
   isWeekend: boolean;
   isEmpty: boolean;    // true = wolne/urlop/L4 → szary tekst
   isSpecial: boolean;  // true = urlop/delegacja → amber
+  isDelivery: boolean; // true = ta osoba robi dziś dostawę (magazynier lub jego zastępca) → żółty
   shiftCode: ShiftCode | null;
 }
 
@@ -78,16 +81,16 @@ function buildCell(
 
   switch (code) {
     case 'DAY_OFF':
-      return { label: 'W', isWeekend: weekend, isEmpty: true, isSpecial: false, shiftCode: code };
+      return { label: 'W', isWeekend: weekend, isEmpty: true, isSpecial: false, isDelivery: false, shiftCode: code };
 
     case 'VACATION':
-      return { label: 'U', isWeekend: weekend, isEmpty: true, isSpecial: true, shiftCode: code };
+      return { label: 'U', isWeekend: weekend, isEmpty: true, isSpecial: true, isDelivery: false, shiftCode: code };
 
     case 'SICK_LEAVE':
-      return { label: 'L4', isWeekend: weekend, isEmpty: true, isSpecial: true, shiftCode: code };
+      return { label: 'L4', isWeekend: weekend, isEmpty: true, isSpecial: true, isDelivery: false, shiftCode: code };
 
     case 'DELEGATION':
-      return { label: 'D', isWeekend: weekend, isEmpty: false, isSpecial: true, shiftCode: code };
+      return { label: 'D', isWeekend: weekend, isEmpty: false, isSpecial: true, isDelivery: false, shiftCode: code };
 
     case 'WORK':
     case 'WORK_BY_PROPOSAL':
@@ -99,6 +102,7 @@ function buildCell(
         isWeekend: weekend,
         isEmpty: false,
         isSpecial: code === 'WORK_BY_PROPOSAL',
+        isDelivery: false,
         shiftCode: code,
       };
     }
@@ -107,9 +111,10 @@ function buildCell(
 
 /**
  * Zwraca klasy CSS tła komórki na podstawie kodu zmiany i weekendu.
- * Priorytet: WORK_BY_PROPOSAL > VACATION > SICK_LEAVE > DELEGATION > weekend > brak
+ * Priorytet: DOSTAWA > WORK_BY_PROPOSAL > VACATION > SICK_LEAVE > DELEGATION > weekend > brak
  */
 function cellBgClass(cell: ShiftCell): string {
+  if (cell.isDelivery) return 'bg-yellow-500/30';
   switch (cell.shiftCode) {
     case 'WORK_BY_PROPOSAL': return 'bg-violet-900/40';
     case 'VACATION':         return 'bg-emerald-900/40';
@@ -118,6 +123,96 @@ function cellBgClass(cell: ShiftCell): string {
     default:
       return cell.isWeekend ? 'bg-slate-600/25' : '';
   }
+}
+
+// ── Ustalanie kto danego dnia robi dostawę (magazynier lub jego zastępca) ──
+
+const JS_DAY_TO_DOW = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const;
+
+function parseHour(t: string | null | undefined): number | null {
+  if (!t) return null;
+  const h = parseInt(t.split(':')[0], 10);
+  return Number.isNaN(h) ? null : h;
+}
+
+function startEndHoursFromArray(arr: number[] | undefined | null): { start: number; end: number } | null {
+  if (!arr || arr.length !== 24) return null;
+  const start = arr.indexOf(1);
+  if (start === -1) return null; // brak zmiany dostawy tego dnia
+  const end = (arr.lastIndexOf(1) + 1) % 24;
+  return { start, end };
+}
+
+function isWorkingCode(code: ShiftCode): boolean {
+  return code === 'WORK' || code === 'WORK_BY_PROPOSAL';
+}
+
+/**
+ * Dla każdego dnia miesiąca ustala, kto robi dostawę:
+ * - jeśli magazynier (primaryEmployeeId) pracuje tego dnia na zmianie zgodnej
+ *   z konfiguracją dostawy → to on,
+ * - jeśli magazynier jest nieobecny (urlop/wolne/delegacja) → szuka wśród
+ *   pozostałych pracowników z uprawnieniem canOperateDelivery kogoś, kto
+ *   pracuje na zmianie pokrywającej się godzinowo z konfiguracją dostawy.
+ * Zwraca mapę: dzień miesiąca → employeeId osoby robiącej dostawę.
+ */
+function computeDeliveryAssignments(
+  delivery: ResponseStoreDeliveryDTO | null,
+  year: number,
+  month: number, // 0-indexed
+  daysCount: number,
+  empDayDetail: Map<number, Map<number, ResponseScheduleDetailsDTO>>,
+  employeeById: Map<number, ResponseEmployeeDTO>,
+): Map<number, number> {
+  const result = new Map<number, number>();
+  if (!delivery || !delivery.hasDedicatedWarehouseman || !delivery.primaryEmployeeId) {
+    return result;
+  }
+
+  const warehousemanId = delivery.primaryEmployeeId;
+  const weeklySchedule = delivery.storeWeeklyDeliverySchedule?.deliverySchedule;
+  if (!weeklySchedule) return result;
+
+  for (let day = 1; day <= daysCount; day++) {
+    const dow = JS_DAY_TO_DOW[new Date(year, month, day).getDay()];
+    const dayConfig = weeklySchedule[dow];
+    if (!dayConfig || !dayConfig.hasDelivery) continue;
+
+    const hours = startEndHoursFromArray(dayConfig.shiftAsArray);
+    if (!hours) continue;
+
+    const warehousemanDetail = empDayDetail.get(warehousemanId)?.get(day);
+    if (
+      warehousemanDetail &&
+      isWorkingCode(warehousemanDetail.shiftCode) &&
+      parseHour(warehousemanDetail.startHour) === hours.start &&
+      parseHour(warehousemanDetail.endHour) === hours.end
+    ) {
+      result.set(day, warehousemanId);
+      continue;
+    }
+
+    // Magazynier nie robi dziś dostawy — szukamy, kto go zastępuje
+    for (const [empId, dayMap] of empDayDetail.entries()) {
+      if (empId === warehousemanId) continue;
+      const employee = employeeById.get(empId);
+      if (!employee?.canOperateDelivery) continue;
+
+      const detail = dayMap.get(day);
+      if (!detail) continue;
+
+      if (
+        isWorkingCode(detail.shiftCode) &&
+        parseHour(detail.startHour) === hours.start &&
+        parseHour(detail.endHour) === hours.end
+      ) {
+        result.set(day, empId);
+        break;
+      }
+    }
+  }
+
+  return result;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -146,6 +241,12 @@ export default function ScheduleViewer({
       // 1. Pracownicy sklepu
       const empPage = await employeeService.getAll(storeId, undefined, { page: 0, size: 200 });
       const employees: ResponseEmployeeDTO[] = empPage.content;
+
+      // 1b. Konfiguracja dostaw sklepu (kto jest magazynierem, harmonogram dostaw)
+      //     — jeśli sklep nie ma jeszcze skonfigurowanej dostawy, po prostu nie oznaczamy nikogo
+      const delivery: ResponseStoreDeliveryDTO | null = await storeDeliveryService
+        .get(storeId)
+        .catch(() => null);
 
       // 2. Szczegóły grafiku
       const detailsPage = await scheduleService.getDetails(
@@ -209,6 +310,12 @@ export default function ScheduleViewer({
         );
       }
 
+      // 4b. Mapa: dzień miesiąca → id pracownika, który tego dnia robi dostawę
+      //     (magazynier, albo — gdy magazynier jest nieobecny — jego zastępca)
+      const deliveryAssignments = computeDeliveryAssignments(
+        delivery, year, month, days, empDayDetail, employeeById,
+      );
+
       // 5. Budujemy wiersze tabeli
       const builtRows: EmployeeRow[] = rowSubjects
         .map((employee) => {
@@ -224,10 +331,11 @@ export default function ScheduleViewer({
             const detail  = dayDetail.get(day);
 
             if (!detail) {
-              return { label: '—', isWeekend: weekend, isEmpty: true, isSpecial: false, shiftCode: null };
+              return { label: '—', isWeekend: weekend, isEmpty: true, isSpecial: false, isDelivery: false, shiftCode: null };
             }
 
             const cell = buildCell(detail, weekend);
+            cell.isDelivery = deliveryAssignments.get(day) === employee.id;
 
             // ── Zliczanie godzin ──────────────────────────────────────────
             switch (detail.shiftCode) {
@@ -468,6 +576,7 @@ export default function ScheduleViewer({
                         <td
                           key={day}
                           className={`border px-0.5 py-1 text-center w-14 align-middle ${
+                            cell.isDelivery                        ? 'border-yellow-400/60' :
                             cell.shiftCode === 'WORK_BY_PROPOSAL' ? 'border-violet-500/50' :
                             cell.shiftCode === 'VACATION'         ? 'border-emerald-700/50' :
                             cell.shiftCode === 'SICK_LEAVE'       ? 'border-yellow-700/50' :
@@ -488,6 +597,7 @@ export default function ScheduleViewer({
                           ) : (
                             // zmiana robocza lub delegacja
                             <span className={`font-medium whitespace-pre text-[10px] leading-tight block ${
+                              cell.isDelivery                       ? 'text-yellow-200' :
                               cell.shiftCode === 'WORK_BY_PROPOSAL' ? 'text-violet-300' :
                               cell.shiftCode === 'DELEGATION'       ? 'text-indigo-300' :
                                                                        'text-emerald-300'
@@ -567,6 +677,10 @@ export default function ScheduleViewer({
                     <span className="inline-block w-3 h-3 rounded-sm bg-indigo-900/40 border border-indigo-500/50" />
                     <span className="text-indigo-300 font-mono">D</span>
                     Delegacja
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-yellow-500/30 border border-yellow-400/60" />
+                    Osoba robiąca dostawę
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="text-emerald-300 font-mono text-[10px]">08:00<br/>16:00</span>
