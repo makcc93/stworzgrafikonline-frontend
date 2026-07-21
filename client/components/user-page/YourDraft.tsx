@@ -13,8 +13,17 @@
  * - TemplateManager i PeriodEstimation w trybie 2 korzystają z tych samych danych
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Loader, CalendarDays } from 'lucide-react';
+import { useState, useEffect, useMemo, type ComponentType, type ReactNode } from 'react';
+import {
+  Loader,
+  CalendarDays,
+  LayoutTemplate,
+  CalendarClock,
+  Users2,
+  AlertTriangle,
+  History,
+  Sparkles,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { ResponseDemandDraftDTO } from '@/types/draft.types';
 import {
@@ -34,18 +43,150 @@ import { TemplateManager } from '@/components/draft/TemplateManager';
 import { PeriodEstimation } from '@/components/draft/PeriodEstimation';
 import { DraftHeader } from './draft/DraftHeader';
 import { MonthlyPeopleChart } from './draft/MonthlyPeopleChart';
-import { DraftSelector } from './draft/DraftSelector';
 import { SelectionInfo } from './draft/SelectionInfo';
 import { DraftChart } from './draft/DraftChart';
-import { DraftArray } from './draft/DraftArray';
 import { DraftStats } from './draft/DraftStats';
 import { MiniCalendar } from './draft/MiniCalendar';
-import { StatsCards } from './draft/StatsCards';
 import { useAppContext } from '@/context/AppContext';
 import { useRequestGuard } from '@/hooks/useRequestGuard';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
 import { DAYS_OF_WEEK, MONTHS } from '@/utils/calendar';
 import EmployeeHoursConfirmationStep from './EmployeeHoursConfirmationStep';
+
+// ============================================================
+// PREZENTACYJNE KOMPONENTY POMOCNICZE (tylko warstwa wizualna,
+// bez żadnej logiki biznesowej — ta zostaje w YourDraft)
+// ============================================================
+
+/** Delikatne, animowane tło w nagłówku — subtelny akcent, nie odciąga uwagi od danych. */
+function HeaderAurora() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl" aria-hidden="true">
+      <div className="draft-aurora-blob absolute -top-16 -left-10 w-64 h-64 rounded-full bg-blue-500/20 blur-3xl" />
+      <div className="draft-aurora-blob draft-aurora-blob-delayed absolute -bottom-20 right-0 w-72 h-72 rounded-full bg-cyan-400/15 blur-3xl" />
+    </div>
+  );
+}
+
+/** Pierścień postępu okresu rozliczeniowego — wizualizuje którym miesiącem z serii jesteśmy. */
+function BillingPeriodRing({ current, total }: { current: number; total: number }) {
+  const size = 44;
+  const stroke = 4;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const progress = total > 0 ? current / total : 0;
+  const offset = circumference * (1 - progress);
+
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-indigo-900/60" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className="text-indigo-400 draft-ring-progress"
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[11px] font-bold text-indigo-100 leading-none">{current}/{total}</span>
+      </div>
+    </div>
+  );
+}
+
+type DraftModeId = 'templates' | 'edit' | 'hoursConfirmation';
+
+interface ModeTabConfig {
+  id: DraftModeId;
+  label: string;
+  shortLabel: string;
+  icon: ComponentType<{ className?: string }>;
+}
+
+/** Segmentowany przełącznik trybów z animowanym tłem podążającym za aktywną zakładką. */
+function ModeTabs({
+  tabs,
+  activeMode,
+  onChange,
+}: {
+  tabs: ModeTabConfig[];
+  activeMode: DraftModeId;
+  onChange: (mode: DraftModeId) => void;
+}) {
+  const activeIndex = Math.max(0, tabs.findIndex((t) => t.id === activeMode));
+  const count = tabs.length;
+
+  return (
+    <div
+      role="tablist"
+      aria-label="Tryb zarządzania draftem"
+      className="relative flex w-full sm:w-auto bg-slate-900/60 border border-slate-700/70 rounded-xl p-1 gap-1 overflow-x-auto"
+    >
+      <div
+        className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 shadow-lg shadow-blue-900/40 transition-transform duration-300 ease-out"
+        style={{
+          width: `calc(${100 / count}% - 4px)`,
+          transform: `translateX(calc(${activeIndex * 100}% + ${activeIndex * 4}px))`,
+        }}
+        aria-hidden="true"
+      />
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        const isActive = tab.id === activeMode;
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(tab.id)}
+            className={`relative z-10 flex items-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm whitespace-nowrap transition-colors ${
+              isActive ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Icon className="w-4 h-4 flex-shrink-0" />
+            <span className="hidden sm:inline">{tab.label}</span>
+            <span className="sm:hidden">{tab.shortLabel}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Nagłówek sekcji — spójna etykieta "eyebrow" dla grup treści w trybie edycji. */
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+      <span className="h-px flex-1 max-w-4 bg-slate-700" />
+      {children}
+      <span className="h-px flex-1 bg-slate-700" />
+    </h3>
+  );
+}
+
+/** Elegancki skeleton zamiast gołego spinnera — mniej "migotania", bardziej dopracowane wrażenie ładowania. */
+function DraftLoadingSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="h-11 bg-slate-800/60 border border-slate-700/50 rounded-lg draft-shimmer" />
+      <div className="h-12 w-full sm:w-96 bg-slate-800/60 border border-slate-700/50 rounded-xl draft-shimmer" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 h-80 bg-slate-800/40 border border-slate-700/50 rounded-2xl draft-shimmer" />
+        <div className="h-80 bg-slate-800/40 border border-slate-700/50 rounded-2xl draft-shimmer" />
+      </div>
+    </div>
+  );
+}
+
+/** Wspólny styl "szklanego" panelu używany w całym module draftu. */
+const GLASS_PANEL = 'bg-slate-800/40 backdrop-blur-xl border border-slate-700/60 rounded-2xl';
 
 export default function YourDraft() {
   // ─── Pobierz aktualnie wybrany sklep z kontekstu ───────────
@@ -631,107 +772,98 @@ export default function YourDraft() {
   // Brak wybranego sklepu
   if (!currentStoreId) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 space-y-3">
-        <CalendarDays className="w-12 h-12 text-slate-600" />
-        <p className="text-slate-400 text-center">Wybierz sklep z górnego menu, aby zarządzać draftem.</p>
+      <div className={`${GLASS_PANEL} flex flex-col items-center justify-center py-20 px-6 space-y-4`}>
+        <div className="w-16 h-16 rounded-2xl bg-slate-700/50 flex items-center justify-center">
+          <CalendarDays className="w-8 h-8 text-slate-500" />
+        </div>
+        <div className="text-center space-y-1">
+          <p className="text-slate-200 font-semibold">Nie wybrano sklepu</p>
+          <p className="text-slate-500 text-sm">Wybierz sklep z górnego menu, aby zarządzać draftem.</p>
+        </div>
       </div>
     );
   }
 
   if (loading) {
-    return (
-      <div className="flex justify-center py-16">
-        <Loader className="w-8 h-8 text-blue-400 animate-spin" />
-      </div>
-    );
+    return <DraftLoadingSkeleton />;
   }
 
   if (error) {
     return (
-      <div className="bg-red-900/20 border border-red-700 rounded-lg p-4">
-        <p className="text-red-300 mb-4">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors"
-        >
-          Ponów próbę
-        </button>
+      <div className="bg-red-950/40 border border-red-800/60 rounded-2xl p-6 flex items-start gap-4">
+        <div className="w-10 h-10 rounded-xl bg-red-900/50 flex items-center justify-center flex-shrink-0">
+          <AlertTriangle className="w-5 h-5 text-red-400" />
+        </div>
+        <div className="flex-1 space-y-3">
+          <div>
+            <p className="text-red-200 font-semibold">Nie udało się wczytać draftu</p>
+            <p className="text-red-300/80 text-sm mt-0.5">{error}</p>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors"
+          >
+            Ponów próbę
+          </button>
+        </div>
       </div>
     );
   }
 
+  const MODE_TABS: ModeTabConfig[] = [
+    { id: 'templates', label: 'Szablony Dni Tygodnia', shortLabel: 'Szablony', icon: LayoutTemplate },
+    { id: 'edit', label: 'Edycja Konkretnych Dni', shortLabel: 'Edycja Dni', icon: CalendarClock },
+    ...(isLastMonthOfPeriod
+      ? [{ id: 'hoursConfirmation' as const, label: 'Pozostałe Godziny Pracowników', shortLabel: 'Godziny', icon: Users2 }]
+      : []),
+  ];
+
   return (
     <div className="space-y-6">
-      {/* ============ MODE SWITCHER + BILLING BADGE ============ */}
-      {/* "Ostatnia zmiana" całego draftu tego miesiąca — jeden, wspólny wskaźnik,
-          widoczny niezależnie od trybu (Szablony / Edycja Konkretnych Dni) i
-          niezależnie od wybranego dnia tygodnia w zakładce Szablony. Pokazuje
-          najnowszy zapis spośród WSZYSTKICH draftów miesiąca (patrz
-          draftLastModifiedRecord) — to NIE jest data zmiany konkretnego
-          szablonu dnia, tylko ogólny stan całego draftu. */}
-      <div className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-4 py-2.5">
-        <LastModifiedInfo
-          updatedAt={draftLastModifiedRecord?.updatedAt}
-          createdAt={draftLastModifiedRecord?.createdAt}
-          updatedByLabel={draftLastModifiedRecord?.updatedByLabel}
-          createdByLabel={draftLastModifiedRecord?.createdByLabel}
-        />
-      </div>
-
-      <div className="border-b border-slate-700">
-        <div className="flex items-center justify-between gap-4">
-          {/* Przyciski trybów */}
-          <div className="flex gap-1 overflow-x-auto">
-            <button
-              onClick={() => handleModeChange('templates')}
-              className={`px-6 py-3 font-semibold transition-all whitespace-nowrap ${
-                activeMode === 'templates'
-                  ? 'text-blue-400 border-b-2 border-blue-400'
-                  : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              Szablony Dni Tygodnia
-            </button>
-            <button
-              onClick={() => handleModeChange('edit')}
-              className={`px-6 py-3 font-semibold transition-all whitespace-nowrap ${
-                activeMode === 'edit'
-                  ? 'text-blue-400 border-b-2 border-blue-400'
-                  : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              Edycja Konkretnych Dni
-            </button>
-            {isLastMonthOfPeriod && (
-              <button
-                onClick={() => handleModeChange('hoursConfirmation')}
-                className={`px-6 py-3 font-semibold transition-all whitespace-nowrap ${
-                  activeMode === 'hoursConfirmation'
-                    ? 'text-blue-400 border-b-2 border-blue-400'
-                    : 'text-slate-400 hover:text-slate-300'
-                }`}
-              >
-                Pozostałe godziny pracowników dla ostatniego miesiąca okresu
-              </button>
-            )}
+      {/* ============ NAGŁÓWEK: tytuł modułu + ostatnia zmiana + okres rozliczeniowy ============ */}
+      <div className={`relative overflow-hidden ${GLASS_PANEL} p-5 sm:p-6`}>
+        <HeaderAurora />
+        <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 flex items-center justify-center shadow-lg shadow-blue-950/50 flex-shrink-0">
+              <Sparkles className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Planowanie Obsady</h2>
+              <div className="flex items-center gap-1.5 text-slate-400 text-sm mt-0.5">
+                <History className="w-3.5 h-3.5 flex-shrink-0" />
+                <LastModifiedInfo
+                  updatedAt={draftLastModifiedRecord?.updatedAt}
+                  createdAt={draftLastModifiedRecord?.createdAt}
+                  updatedByLabel={draftLastModifiedRecord?.updatedByLabel}
+                  createdByLabel={draftLastModifiedRecord?.createdByLabel}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Odznaczka okresu rozliczeniowego */}
           {billingPeriodInfo && (
-            <div className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 mb-1 bg-indigo-600/20 border border-indigo-500/40 rounded-lg">
-              <CalendarDays className="w-6 h-6 text-indigo-400" />
-              <span className="text-base font-semibold text-indigo-200 whitespace-nowrap">
-                Miesiąc okresu rozliczenia:{' '}
-                <span className="text-indigo-200">{billingPeriodInfo.current}/{billingPeriodInfo.total}</span>
-              </span>
+            <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-950/50 border border-indigo-700/40 rounded-xl">
+              <BillingPeriodRing current={billingPeriodInfo.current} total={billingPeriodInfo.total} />
+              <div className="leading-tight">
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-indigo-400">Okres rozliczeniowy</p>
+                <p className="text-sm font-semibold text-indigo-100">
+                  Miesiąc {billingPeriodInfo.current} z {billingPeriodInfo.total}
+                  {isLastMonthOfPeriod && <span className="ml-1.5 text-amber-400">· ostatni</span>}
+                </p>
+              </div>
             </div>
           )}
         </div>
       </div>
 
+      {/* ============ PRZEŁĄCZNIK TRYBÓW ============ */}
+      <ModeTabs tabs={MODE_TABS} activeMode={activeMode} onChange={handleModeChange} />
+
       {/* ============ MODE 1: SZABLONY ============ */}
       {activeMode === 'templates' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div key="templates" className="draft-fade-in grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* TemplateManager */}
           <div className="lg:col-span-2">
             <TemplateManager
@@ -772,82 +904,92 @@ export default function YourDraft() {
 
           {/* Kalendarz + statystyki */}
           <div className="space-y-4">
-            <div className="bg-blue-900/30 border border-blue-700/50 rounded-lg p-4">
-              <p className="text-blue-300 text-sm">
-                <strong>Szablon dla:</strong> {DAYS_OF_WEEK[(selectedTemplateDay + 6) % 7]}
+            <div className={`${GLASS_PANEL} p-4 flex items-center gap-3`}>
+              <div className="w-9 h-9 rounded-lg bg-blue-600/20 border border-blue-600/30 flex items-center justify-center flex-shrink-0">
+                <LayoutTemplate className="w-4 h-4 text-blue-400" />
+              </div>
+              <p className="text-slate-300 text-sm">
+                <span className="block text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Szablon dla</span>
+                <span className="font-semibold text-white">{DAYS_OF_WEEK[(selectedTemplateDay + 6) % 7]}</span>
               </p>
             </div>
-            <MiniCalendar
-              year={year}
-              month={month}
-              selectedDate={selectedDate}
-              drafts={drafts}
-              holidayDates={holidayDates}
-              onMonthChange={handleMonthChange}
-              onDateSelect={handleDateSelect}
-            />
+            <div className={`${GLASS_PANEL} p-4`}>
+              <MiniCalendar
+                year={year}
+                month={month}
+                selectedDate={selectedDate}
+                drafts={drafts}
+                holidayDates={holidayDates}
+                onMonthChange={handleMonthChange}
+                onDateSelect={handleDateSelect}
+              />
+            </div>
           </div>
         </div>
       )}
 
       {/* ============ MODE 2: EDYCJA KONKRETNYCH DNI ============ */}
       {activeMode === 'edit' && (
-        <div className="space-y-6">
-          <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-2xl p-8 space-y-8">
+        <div key="edit" className="draft-fade-in space-y-6">
+          <div className={`${GLASS_PANEL} p-6 sm:p-8 space-y-8`}>
             <DraftHeader onLoadSample={handleLoadSample} onReset={handleResetDraft} />
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-300 mb-3">Wybierz dzień</h4>
-                <MiniCalendar
-                  year={year}
-                  month={month}
-                  selectedDate={selectedDate}
-                  drafts={drafts}
-                  onMonthChange={handleMonthChange}
-                  onDateSelect={handleDateSelect}
-                />
-              </div>
+            <div className="space-y-4">
+              <SectionLabel>Wybór dnia i podgląd</SectionLabel>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-3">Wybierz dzień</h4>
+                  <MiniCalendar
+                    year={year}
+                    month={month}
+                    selectedDate={selectedDate}
+                    drafts={drafts}
+                    onMonthChange={handleMonthChange}
+                    onDateSelect={handleDateSelect}
+                  />
+                </div>
 
-              <div className="lg:col-span-2 space-y-4">
-                <SelectionInfo
-                  month={month}
-                  year={year}
-                  selectedDayOfWeek={selectedDayOfWeek}
-                  selectedDate={selectedDate}
-                  updatedAt={selectedDraftRecord?.updatedAt}
-                  createdAt={selectedDraftRecord?.createdAt}
-                  updatedByLabel={selectedDraftRecord?.updatedByLabel}
-                  createdByLabel={selectedDraftRecord?.createdByLabel}
-                />
-                <MonthlyPeopleChart drafts={drafts} year={year} month={month} />
+                <div className="lg:col-span-2 space-y-4">
+                  <SelectionInfo
+                    month={month}
+                    year={year}
+                    selectedDayOfWeek={selectedDayOfWeek}
+                    selectedDate={selectedDate}
+                    updatedAt={selectedDraftRecord?.updatedAt}
+                    createdAt={selectedDraftRecord?.createdAt}
+                    updatedByLabel={selectedDraftRecord?.updatedByLabel}
+                    createdByLabel={selectedDraftRecord?.createdByLabel}
+                  />
+                  <MonthlyPeopleChart drafts={drafts} year={year} month={month} />
+                </div>
               </div>
             </div>
 
             {/* Estymacja draftu — tryb 2 */}
             {monthlyNormData && (
-              <PeriodEstimation
-                confirmedDraftHours={confirmedDraftHours}
-                liveTemplateDraftHours={null}
-                activeNonWarehouseCount={monthlyNormData.activeNonWarehouseCount}
-                totalEmployeeNorm={monthlyNormData.totalEmployeeNorm}
-                totalVacationDays={totalVacationDays}
-                totalDelegationDays={totalDelegationDays}
-              />
+              <div className="space-y-4">
+                <SectionLabel>Estymacja okresu</SectionLabel>
+                <PeriodEstimation
+                  confirmedDraftHours={confirmedDraftHours}
+                  liveTemplateDraftHours={null}
+                  activeNonWarehouseCount={monthlyNormData.activeNonWarehouseCount}
+                  totalEmployeeNorm={monthlyNormData.totalEmployeeNorm}
+                  totalVacationDays={totalVacationDays}
+                  totalDelegationDays={totalDelegationDays}
+                />
+              </div>
             )}
 
-            <section className="space-y-2">
-              <h3 className="text-base font-semibold text-slate-200">
-                Wykres i sterowanie godzinami
-              </h3>
-              <DraftChart 
-                draft={draft} 
-                onSave={handleDraftChartSave} 
+            <div className="space-y-4">
+              <SectionLabel>Wykres i sterowanie godzinami</SectionLabel>
+              <DraftChart
+                draft={draft}
+                onSave={handleDraftChartSave}
                 maxValue={maxStaffFromStore}
                 openHour={storeHoursForSelectedDay?.openHour}
                 closeHour={storeHoursForSelectedDay?.closeHour}
               />
-            </section>
+            </div>
 
             <DraftStats draft={draft} />
           </div>
@@ -856,7 +998,7 @@ export default function YourDraft() {
 
       {/* ============ MODE 3: POZOSTAŁE GODZINY PRACOWNIKÓW (ostatni miesiąc okresu) ============ */}
       {activeMode === 'hoursConfirmation' && currentStoreId && (
-        <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-2xl overflow-hidden" style={{ minHeight: 480 }}>
+        <div key="hoursConfirmation" className={`draft-fade-in ${GLASS_PANEL} overflow-hidden`} style={{ minHeight: 480 }}>
           <EmployeeHoursConfirmationStep
             storeId={currentStoreId}
             year={year}
@@ -875,6 +1017,41 @@ export default function YourDraft() {
           />
         </div>
       )}
+
+      {/* Lokalne animacje — bez zależności od tailwind.config, działa wszędzie */}
+      <style>{`
+        @keyframes draftFadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .draft-fade-in { animation: draftFadeIn 0.35s ease both; }
+
+        @keyframes draftAuroraPulse {
+          0%, 100% { opacity: 0.55; transform: scale(1); }
+          50% { opacity: 0.9; transform: scale(1.08); }
+        }
+        .draft-aurora-blob { animation: draftAuroraPulse 7s ease-in-out infinite; }
+        .draft-aurora-blob-delayed { animation-delay: 2.5s; }
+
+        .draft-ring-progress { transition: stroke-dashoffset 0.6s ease; }
+
+        @keyframes draftShimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .draft-shimmer {
+          background-image: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.08), transparent);
+          background-size: 200% 100%;
+          animation: draftShimmer 1.6s ease-in-out infinite;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .draft-fade-in, .draft-aurora-blob, .draft-ring-progress, .draft-shimmer {
+            animation: none !important;
+            transition: none !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }
