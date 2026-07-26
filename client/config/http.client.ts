@@ -47,7 +47,15 @@ async function parseError(response: Response): Promise<string> {
       return response.statusText;
     }
   }
-  return response.statusText;
+  // Część endpointów (np. IllegalArgumentException w GlobalControllerExceptionHandler)
+  // zwraca treść błędu jako zwykły text/plain zamiast JSON — bez tego fallbacku
+  // ta treść była odrzucana i front pokazywał tylko generyczne "Bad Request".
+  try {
+    const text = (await response.text()).trim();
+    return text || response.statusText;
+  } catch {
+    return response.statusText;
+  }
 }
 
 function buildQueryString(params: Record<string, string | number | undefined>): string {

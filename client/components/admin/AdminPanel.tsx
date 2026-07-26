@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Settings, Plus, Edit, Trash2, Search, AlertCircle, CalendarDays, Users, Eye, EyeOff, ShieldCheck, Store, Building2, Globe, UserCog, KeyRound, ShieldAlert, X, Play } from 'lucide-react';
+import { Settings, Plus, Edit, Trash2, Search, AlertCircle, CalendarDays, Users, Eye, EyeOff, ShieldCheck, Store, Building2, Globe, UserCog, KeyRound, ShieldAlert, X, Play, Accessibility } from 'lucide-react';
 import { toast } from 'sonner';
-import { regionService, branchService, positionService, billingPeriodConfigService, userService, storeService, appInitializerService } from '@/services/api-provider';
+import { regionService, branchService, positionService, billingPeriodConfigService, userService, storeService, appInitializerService, specialWorkNormService } from '@/services/api-provider';
 import type { ResponseRegionDTO } from '@/types/region.types';
 import type { ResponseBranchDTO } from '@/types/branch.types';
 import type { ResponsePositionDTO } from '@/types/position.types';
 import type { BillingPeriodConfigResponse } from '@/types/billing-period-config.types';
+import type { ResponseSpecialWorkNormDTO } from '@/types/special-work-norm.types';
 import type { UserResponse, UserRole, DirectorScope, CreateUserRequest } from '@/services/api/user.service';
 import type { ResponseStoreDTO } from '@/types/YourStore.types';
 import { validatePositionName, validatePositionDescription, createEmptyPositionForm, positionToFormData, type PositionFormData } from '@/utils/position.utils';
@@ -89,13 +90,29 @@ const emptyUserForm = (): CreateUserFormData => ({
 
 // ==================== TYPES ====================
 
-type Tab = 'regions' | 'branches' | 'positions' | 'billing' | 'users' | 'stores';
+type Tab = 'regions' | 'branches' | 'positions' | 'specialWorkNorms' | 'billing' | 'users' | 'stores';
 type ModalMode = 'create' | 'edit' | null;
 
 interface BillingPeriodFormData {
   startMonth: number;
   durationMonths: number;
 }
+
+interface SpecialWorkNormFormData {
+  name: string;
+  maxDailyHours: number;
+  weeklyNorm: number;
+  description: string;
+  active: boolean;
+}
+
+const emptySpecialWorkNormForm = (): SpecialWorkNormFormData => ({
+  name: '',
+  maxDailyHours: 7,
+  weeklyNorm: 35,
+  description: '',
+  active: true,
+});
 
 // ==================== COMPONENT ====================
 
@@ -105,6 +122,7 @@ export default function AdminPanel() {
   const [regions, setRegions]         = useState<ResponseRegionDTO[]>([]);
   const [branches, setBranches]       = useState<ResponseBranchDTO[]>([]);
   const [positions, setPositions]     = useState<ResponsePositionDTO[]>([]);
+  const [specialWorkNorms, setSpecialWorkNorms] = useState<ResponseSpecialWorkNormDTO[]>([]);
   const [billingPeriods, setBillingPeriods] = useState<BillingPeriodConfigResponse[]>([]);
   const [users, setUsers]             = useState<UserResponse[]>([]);
   const [stores, setStores]           = useState<ResponseStoreDTO[]>([]);
@@ -112,6 +130,7 @@ export default function AdminPanel() {
   const [loadingRegions, setLoadingRegions]     = useState(false);
   const [loadingBranches, setLoadingBranches]   = useState(false);
   const [loadingPositions, setLoadingPositions] = useState(false);
+  const [loadingSpecialWorkNorms, setLoadingSpecialWorkNorms] = useState(false);
   const [loadingBilling, setLoadingBilling]     = useState(false);
   const [loadingUsers, setLoadingUsers]         = useState(false);
   const [loadingStores, setLoadingStores]       = useState(false);
@@ -125,6 +144,7 @@ export default function AdminPanel() {
   const [regionForm, setRegionForm]     = useState<RegionFormData>(createEmptyRegionForm());
   const [branchForm, setBranchForm]     = useState<BranchFormData>(createEmptyBranchForm());
   const [positionForm, setPositionForm] = useState<PositionFormData>(createEmptyPositionForm());
+  const [specialWorkNormForm, setSpecialWorkNormForm] = useState<SpecialWorkNormFormData>(emptySpecialWorkNormForm());
   const [billingForm, setBillingForm]   = useState<BillingPeriodFormData>({ startMonth: 1, durationMonths: 3 });
   const [userForm, setUserForm]         = useState<CreateUserFormData>(emptyUserForm());
   const [showPassword, setShowPassword] = useState(false);
@@ -133,12 +153,13 @@ export default function AdminPanel() {
   const [branchSearch, setBranchSearch]             = useState('');
   const [branchFilterRegion, setBranchFilterRegion] = useState<number | null>(null);
   const [positionSearch, setPositionSearch]         = useState('');
+  const [specialWorkNormSearch, setSpecialWorkNormSearch] = useState('');
   const [userSearch, setUserSearch]                 = useState('');
   const [userRoleFilter, setUserRoleFilter]         = useState<UserRole | ''>('');
   const [storeSearch, setStoreSearch]               = useState('');
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
-    type: 'region' | 'branch' | 'position' | 'billing' | 'user' | 'store';
+    type: 'region' | 'branch' | 'position' | 'specialWorkNorm' | 'billing' | 'user' | 'store';
     id: number;
     name: string;
   } | null>(null);
@@ -157,6 +178,7 @@ export default function AdminPanel() {
   useEffect(() => {
     if (activeTab === 'branches')  loadBranches();
     if (activeTab === 'positions') loadPositions();
+    if (activeTab === 'specialWorkNorms') loadSpecialWorkNorms();
     if (activeTab === 'billing')   loadBillingPeriods();
     if (activeTab === 'users')     { loadUsers(); loadStores(); loadBranches(); loadRegions(); }
     if (activeTab === 'stores')    loadStores();
@@ -198,6 +220,19 @@ export default function AdminPanel() {
       toast.error('Nie udało się załadować stanowisk');
     } finally {
       setLoadingPositions(false);
+    }
+  };
+
+  const loadSpecialWorkNorms = async () => {
+    try {
+      setLoadingSpecialWorkNorms(true);
+      const data = await specialWorkNormService.getAll();
+      setSpecialWorkNorms(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error loading special work norms:', error);
+      toast.error('Nie udało się załadować specjalnych norm pracy');
+    } finally {
+      setLoadingSpecialWorkNorms(false);
     }
   };
 
@@ -429,6 +464,105 @@ export default function AdminPanel() {
       setDeleteConfirm(null);
     } catch (error: any) {
       toast.error(error.message || 'Nie udało się usunąć stanowiska');
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  // ==================== SPECIAL WORK NORM CRUD ====================
+  // Katalog norm dla pracowników ze szczególnymi warunkami zatrudnienia
+  // (employee.isSpecial + employee.specialWorkNormId) — przypisanie do
+  // konkretnego pracownika odbywa się w zakładce "Zespół" danego sklepu,
+  // tutaj zarządzamy globalnie samym katalogiem norm.
+
+  const validateSpecialWorkNormForm = (form: SpecialWorkNormFormData): string | null => {
+    const name = form.name.trim();
+    if (name.length < 3 || name.length > 100) return 'Nazwa musi mieć od 3 do 100 znaków';
+    if (!Number.isFinite(form.maxDailyHours) || form.maxDailyHours < 1 || form.maxDailyHours > 12) {
+      return 'Maksymalny dzienny czas pracy musi być w zakresie 1–12 godzin';
+    }
+    if (!Number.isFinite(form.weeklyNorm) || form.weeklyNorm < 1 || form.weeklyNorm > 60) {
+      return 'Tygodniowa norma musi być w zakresie 1–60 godzin';
+    }
+    return null;
+  };
+
+  const openCreateSpecialWorkNorm = () => {
+    setSpecialWorkNormForm(emptySpecialWorkNormForm());
+    setEditingId(null);
+    setModalMode('create');
+  };
+
+  const openEditSpecialWorkNorm = (norm: ResponseSpecialWorkNormDTO) => {
+    setSpecialWorkNormForm({
+      name: norm.name,
+      maxDailyHours: norm.maxDailyHours,
+      weeklyNorm: norm.weeklyNorm,
+      description: norm.description ?? '',
+      active: norm.active,
+    });
+    setEditingId(norm.id);
+    setModalMode('edit');
+  };
+
+  const handleSaveSpecialWorkNorm = async () => {
+    const validationError = validateSpecialWorkNormForm(specialWorkNormForm);
+    if (validationError) { toast.error(validationError); return; }
+
+    try {
+      setSaving(true);
+      if (modalMode === 'create') {
+        await specialWorkNormService.create({
+          name: specialWorkNormForm.name.trim(),
+          maxDailyHours: specialWorkNormForm.maxDailyHours,
+          weeklyNorm: specialWorkNormForm.weeklyNorm,
+          description: specialWorkNormForm.description.trim() || undefined,
+        });
+        toast.success('Specjalna norma pracy utworzona');
+      } else if (modalMode === 'edit' && editingId) {
+        await specialWorkNormService.update(editingId, {
+          name: specialWorkNormForm.name.trim(),
+          maxDailyHours: specialWorkNormForm.maxDailyHours,
+          weeklyNorm: specialWorkNormForm.weeklyNorm,
+          description: specialWorkNormForm.description.trim() || undefined,
+          active: specialWorkNormForm.active,
+        });
+        toast.success('Specjalna norma pracy zaktualizowana');
+      }
+      await loadSpecialWorkNorms();
+      setModalMode(null);
+    } catch (error: any) {
+      toast.error(error.message || 'Nie udało się zapisać specjalnej normy pracy');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleSpecialWorkNormActive = async (norm: ResponseSpecialWorkNormDTO) => {
+    try {
+      await specialWorkNormService.update(norm.id, {
+        name: norm.name,
+        maxDailyHours: norm.maxDailyHours,
+        weeklyNorm: norm.weeklyNorm,
+        description: norm.description ?? undefined,
+        active: !norm.active,
+      });
+      toast.success(norm.active ? 'Norma dezaktywowana' : 'Norma aktywowana');
+      await loadSpecialWorkNorms();
+    } catch (error: any) {
+      toast.error(error.message || 'Nie udało się zmienić statusu');
+    }
+  };
+
+  const handleDeleteSpecialWorkNorm = async (id: number) => {
+    try {
+      setDeleting(id);
+      await specialWorkNormService.delete(id);
+      toast.success('Specjalna norma pracy usunięta');
+      await loadSpecialWorkNorms();
+      setDeleteConfirm(null);
+    } catch (error: any) {
+      toast.error(error.message || 'Nie udało się usunąć specjalnej normy pracy — może być wciąż przypisana do pracownika');
     } finally {
       setDeleting(null);
     }
@@ -690,6 +824,15 @@ export default function AdminPanel() {
     return filtered.sort((a, b) => a.name.localeCompare(b.name));
   }, [positions, positionSearch]);
 
+  const filteredSpecialWorkNorms = useMemo(() => {
+    let filtered = [...specialWorkNorms];
+    if (specialWorkNormSearch) filtered = filtered.filter(n =>
+      n.name.toLowerCase().includes(specialWorkNormSearch.toLowerCase()) ||
+      (n.description && n.description.toLowerCase().includes(specialWorkNormSearch.toLowerCase()))
+    );
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  }, [specialWorkNorms, specialWorkNormSearch]);
+
   const sortedBillingPeriods = useMemo(
     () => [...billingPeriods].sort((a, b) => a.startMonth - b.startMonth),
     [billingPeriods],
@@ -765,11 +908,12 @@ export default function AdminPanel() {
       <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-2">
         <div className="flex items-center gap-3">
           <div className="flex gap-2 flex-wrap flex-1">
-            {(['regions', 'branches', 'positions', 'billing', 'users', 'stores'] as Tab[]).map(tab => {
+            {(['regions', 'branches', 'positions', 'specialWorkNorms', 'billing', 'users', 'stores'] as Tab[]).map(tab => {
               const labels: Record<Tab, string> = {
                 regions:   `Regiony (${regions.length})`,
                 branches:  `Oddziały (${branches.length})`,
                 positions: `Stanowiska (${positions.length})`,
+                specialWorkNorms: `Specjalne normy pracy (${specialWorkNorms.length})`,
                 billing:   `Okresy rozliczenia (${billingPeriods.length})`,
                 users:     `Użytkownicy (${users.length})`,
                 stores:    `Sklepy (${stores.length})`,
@@ -1022,6 +1166,97 @@ export default function AdminPanel() {
                         <button
                           onClick={() => setDeleteConfirm({ type: 'position', id: position.id, name: position.name })}
                           disabled={deleting === position.id}
+                          className="p-2 hover:bg-slate-600 rounded-lg transition-colors disabled:opacity-50"
+                          title="Usuń"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-400" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Special Work Norm Tab ── */}
+      {activeTab === 'specialWorkNorms' && (
+        <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Szukaj normy..."
+                value={specialWorkNormSearch}
+                onChange={(e) => setSpecialWorkNormSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button
+              onClick={openCreateSpecialWorkNorm}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Dodaj Normę
+            </button>
+          </div>
+
+          <div className="flex items-start gap-2 p-3 bg-blue-600/10 border border-blue-600/30 rounded-lg">
+            <Accessibility className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-300">
+              Katalog norm dla pracowników ze szczególnymi warunkami zatrudnienia (np. pracownik młodociany, niepełnosprawność).
+              Przypisanie konkretnej normy do pracownika (<code className="bg-blue-600/20 px-1 rounded">isSpecial</code>) odbywa się w zakładce „Zespół" danego sklepu — tutaj zarządzasz samym katalogiem, z którego kierownicy wybierają.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-700">
+                  <th className="text-left py-3 px-4 text-slate-400 font-medium">Nazwa</th>
+                  <th className="text-center py-3 px-4 text-slate-400 font-medium">Maks. godz./dzień</th>
+                  <th className="text-center py-3 px-4 text-slate-400 font-medium">Norma tygodniowa</th>
+                  <th className="text-left py-3 px-4 text-slate-400 font-medium">Opis</th>
+                  <th className="text-center py-3 px-4 text-slate-400 font-medium">Status</th>
+                  <th className="text-right py-3 px-4 text-slate-400 font-medium">Akcje</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingSpecialWorkNorms ? (
+                  <tr><td colSpan={6} className="text-center py-8 text-slate-400">Ładowanie...</td></tr>
+                ) : filteredSpecialWorkNorms.length === 0 ? (
+                  <tr><td colSpan={6} className="text-center py-8 text-slate-400">Brak specjalnych norm pracy</td></tr>
+                ) : filteredSpecialWorkNorms.map(norm => (
+                  <tr key={norm.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+                    <td className="py-3 px-4 text-white font-medium">{norm.name}</td>
+                    <td className="py-3 px-4 text-center text-slate-300">{norm.maxDailyHours} h</td>
+                    <td className="py-3 px-4 text-center text-slate-300">{norm.weeklyNorm} h</td>
+                    <td className="py-3 px-4 text-slate-300 text-sm">
+                      {norm.description || <span className="text-slate-500 italic">Brak opisu</span>}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <button
+                        onClick={() => handleToggleSpecialWorkNormActive(norm)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                          norm.active
+                            ? 'bg-green-600/20 text-green-400 hover:bg-green-600/30'
+                            : 'bg-red-600/20 text-red-400 hover:bg-red-600/30'
+                        }`}
+                      >
+                        {norm.active ? 'Aktywna' : 'Nieaktywna'}
+                      </button>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => openEditSpecialWorkNorm(norm)} className="p-2 hover:bg-slate-600 rounded-lg transition-colors" title="Edytuj">
+                          <Edit className="w-4 h-4 text-slate-400" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm({ type: 'specialWorkNorm', id: norm.id, name: norm.name })}
+                          disabled={deleting === norm.id}
                           className="p-2 hover:bg-slate-600 rounded-lg transition-colors disabled:opacity-50"
                           title="Usuń"
                         >
@@ -1567,6 +1802,83 @@ export default function AdminPanel() {
             <div className="p-6 border-t border-slate-700 flex gap-3 justify-end">
               <button onClick={() => setModalMode(null)} disabled={saving} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50">Anuluj</button>
               <button onClick={handleSavePosition} disabled={saving} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50">{saving ? 'Zapisywanie...' : 'Zapisz'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Special Work Norm Modal ── */}
+      {modalMode && activeTab === 'specialWorkNorms' && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="p-6 border-b border-slate-700">
+              <h3 className="text-xl font-bold text-white">
+                {modalMode === 'create' ? 'Dodaj Specjalną Normę Pracy' : 'Edytuj Specjalną Normę Pracy'}
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Nazwa normy *</label>
+                <input
+                  type="text"
+                  value={specialWorkNormForm.name}
+                  onChange={(e) => setSpecialWorkNormForm({ ...specialWorkNormForm, name: e.target.value })}
+                  placeholder="np. Pracownik młodociany"
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Maks. godz./dzień *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    step={0.25}
+                    value={specialWorkNormForm.maxDailyHours}
+                    onChange={(e) => setSpecialWorkNormForm({ ...specialWorkNormForm, maxDailyHours: parseFloat(e.target.value) })}
+                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Norma tygodniowa *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    step={0.5}
+                    value={specialWorkNormForm.weeklyNorm}
+                    onChange={(e) => setSpecialWorkNormForm({ ...specialWorkNormForm, weeklyNorm: parseFloat(e.target.value) })}
+                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Opis (opcjonalny)</label>
+                <textarea
+                  value={specialWorkNormForm.description}
+                  onChange={(e) => setSpecialWorkNormForm({ ...specialWorkNormForm, description: e.target.value })}
+                  placeholder="np. Kodeks Pracy art. 202 — dobowy wymiar czasu pracy"
+                  rows={3}
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+              {modalMode === 'edit' && (
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="special-work-norm-active"
+                    checked={specialWorkNormForm.active}
+                    onChange={(e) => setSpecialWorkNormForm({ ...specialWorkNormForm, active: e.target.checked })}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                  />
+                  <label htmlFor="special-work-norm-active" className="text-sm text-slate-300">Norma aktywna (widoczna do wyboru u kierowników)</label>
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-slate-700 flex gap-3 justify-end">
+              <button onClick={() => setModalMode(null)} disabled={saving} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50">Anuluj</button>
+              <button onClick={handleSaveSpecialWorkNorm} disabled={saving} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50">{saving ? 'Zapisywanie...' : 'Zapisz'}</button>
             </div>
           </div>
         </div>
@@ -2122,6 +2434,7 @@ export default function AdminPanel() {
                   if (deleteConfirm.type === 'region')        handleDeleteRegion(deleteConfirm.id);
                   else if (deleteConfirm.type === 'branch')   handleDeleteBranch(deleteConfirm.id);
                   else if (deleteConfirm.type === 'position') handleDeletePosition(deleteConfirm.id);
+                  else if (deleteConfirm.type === 'specialWorkNorm') handleDeleteSpecialWorkNorm(deleteConfirm.id);
                   else if (deleteConfirm.type === 'billing')  handleDeleteBillingPeriod(deleteConfirm.id);
                   else if (deleteConfirm.type === 'user')     handleDeleteUser(deleteConfirm.id);
                   else if (deleteConfirm.type === 'store')    handleDeleteStore(deleteConfirm.id);
