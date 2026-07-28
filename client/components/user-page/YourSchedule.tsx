@@ -79,6 +79,34 @@ export default function YourSchedule() {
 
   const resolvedStoreId = (selectedStoreId ?? parseInt(storeId as string, 10)) || 1;
 
+  /**
+   * Śledzi, dla którego sklepu aktualnie mamy załadowane `schedules`.
+   *
+   * BUG, który to naprawia: bez tego, reset `schedules` na zmianę sklepu
+   * (Store A → Store B) działał się wyłącznie wewnątrz `fetchSchedules`,
+   * odpalanego z `useEffect`. Efekty uruchamiają się PO tym jak React
+   * wyrenderuje i pokaże klatkę — więc między zmianą `resolvedStoreId`
+   * a odpaleniem efektu istniała (widoczna, nie tylko teoretyczna) klatka,
+   * w której `resolvedStoreId` wskazywał już na Store B, ale `schedules`
+   * to wciąż dane Store A. Kafelek miesiąca pokazywał wtedy "Gotowy" dla
+   * sklepu, który w ogóle nie ma grafiku — a wejście w "Podgląd grafiku"
+   * i tak trafiało w pusty/nieistniejący grafik nowego sklepu ("Brak danych
+   * dla tego miesiąca").
+   *
+   * Rozwiązanie: reset robimy SYNCHRONICZNIE w trakcie renderu (wywołanie
+   * setState bezpośrednio w ciele komponentu, a nie w useEffect) — to
+   * oficjalnie wspierany przez Reacta wzorzec na "dopasuj stan do zmiany
+   * propsa/zależności bez migotania": React commituje ten reset PRZED
+   * namalowaniem klatki, więc użytkownik nigdy nie widzi statusu
+   * poprzedniego sklepu.
+   */
+  const [schedulesStoreId, setSchedulesStoreId] = useState(resolvedStoreId);
+  if (resolvedStoreId !== schedulesStoreId) {
+    setSchedulesStoreId(resolvedStoreId);
+    setSchedules([]);
+    setLoadingSchedules(true);
+  }
+
   // Zabezpieczenia przed race condition — patrz komentarz w useRequestGuard.ts
   const schedulesGuard = useRequestGuard();
   const yearlyHoursGuard = useRequestGuard();
