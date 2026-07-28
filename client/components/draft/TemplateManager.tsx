@@ -3,10 +3,10 @@ import { PeriodEstimation } from './PeriodEstimation';
 import { Loader, Copy, Save, AlertCircle, ChevronUp, ChevronDown, Moon, Sun } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import type { DayOfWeekTemplate } from '@/types/draft.types';
+import type { DayOfWeekTemplate, ResponseDemandDraftDTO } from '@/types/draft.types';
 import { getDatesForDayOfWeek, DEFAULT_DAY_TEMPLATES } from '@/types/draft.types';
 import { draftService } from '@/services/api-provider';
-import { formatDateForBackend } from '@/utils/draft.utils';
+import { formatDateForBackend, buildTemplatesFromDrafts } from '@/utils/draft.utils';
 
 const MONTH_NAMES = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
 const CHART_HEIGHT = 260;
@@ -17,6 +17,10 @@ interface TemplateManagerProps {
   month: number;
   maxValue?: number;
   onTemplatesSaved: () => void;
+  /** Aktualne drafty miesiąca z rodzica (YourDraft) — używane jako fallback do
+   *  zbudowania szablonów z rzeczywistych danych zapisanych w bazie, gdy
+   *  w sessionStorage nie ma jeszcze roboczej wersji szablonów. */
+  drafts: ResponseDemandDraftDTO[];
   // — dane z rodzica (YourDraft) — reaktywne na zapis z obu trybów —
   activeNonWarehouseCount: number;
   /** Suma indywidualnych norm etatu (z backendu), uwzgl. 1/2 etatu etc. */
@@ -79,6 +83,7 @@ export function TemplateManager({
   month,
   maxValue = 20,
   onTemplatesSaved,
+  drafts,
   activeNonWarehouseCount,
   totalEmployeeNorm,
   confirmedDraftHours,
@@ -104,12 +109,15 @@ export function TemplateManager({
 
   /**
    * Inicjalizacja szablonów:
-   * 1. Sprawdź sessionStorage — jeśli użytkownik już edytował szablony w tej sesji,
-   *    odtwórz je dokładnie takie jakie były (niezależnie od zmian w konkretnych dniach).
-   * 2. Jeśli brak zapisu → użyj DEFAULT_DAY_TEMPLATES (puste szablony).
-   *
-   * CELOWO nie uśredniamy draftów z bazy — szablony to niezależny byt,
-   * który nie powinien zmieniać się automatycznie gdy ktoś edytuje konkretny dzień.
+   * 1. Sprawdź sessionStorage — jeśli użytkownik już edytował szablony w tej sesji
+   *    przeglądarki, odtwórz je dokładnie takie jakie były (robocza wersja,
+   *    niezależna od tego co jest w bazie, żeby edycja konkretnego dnia jej nie nadpisywała).
+   * 2. Jeśli w tej sesji przeglądarki nie ma jeszcze zapisu (pierwsze wejście,
+   *    nowa sesja, wyczyszczone dane) → zbuduj szablony z rzeczywistych draftów
+   *    zapisanych w bazie (uśrednione per dzień tygodnia). Bez tego kroku po
+   *    powrocie do zakładki "Szablony" w nowej sesji słupki pokazywały same
+   *    zera, mimo że drafty były poprawnie zapisane w bazie.
+   * 3. Dopiero gdy w bazie też nic nie ma dla danego dnia tygodnia → zera.
    */
   useEffect(() => {
     if (!storeId) { setLoadingTemplates(false); return; }
@@ -121,10 +129,15 @@ export function TemplateManager({
     if (stored) {
       setTemplates(stored);
     } else {
-      setTemplates(DEFAULT_DAY_TEMPLATES.map(t => ({ ...t, hourlyDemand: [...t.hourlyDemand] })));
+      const fromDrafts = buildTemplatesFromDrafts(drafts);
+      setTemplates(fromDrafts);
     }
 
     setLoadingTemplates(false);
+    // `drafts` celowo pominięte w deps — chcemy przeliczyć fallback tylko przy
+    // zmianie sklepu/miesiąca, nie przy każdym odświeżeniu drafts[] z rodzica
+    // (inaczej nadpisywałoby to niezapisane zmiany szablonu w trakcie edycji).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeId, year, month]);
 
   const maxCap = Math.max(maxValue, 1);

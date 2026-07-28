@@ -1,4 +1,5 @@
-import type { CreateDemandDraftDTO } from '@/types/draft.types';
+import type { CreateDemandDraftDTO, DayOfWeekTemplate, ResponseDemandDraftDTO } from '@/types/draft.types';
+import { DEFAULT_DAY_TEMPLATES } from '@/types/draft.types';
 /**
  * Formatuje obiekt Date do formatu YYYY-MM-DD bezpiecznie dla stref czasowych (czas lokalny)
  */
@@ -69,4 +70,43 @@ export function getLatestDraftRecord<
   }
 
   return latest;
+}
+
+/**
+ * Buduje szablony dni tygodnia (jak w zakładce "Szablony") na podstawie
+ * rzeczywistych draftów zapisanych w bazie dla danego miesiąca — uśredniając
+ * godzinowe zapotrzebowanie po wszystkich dniach danego dnia tygodnia
+ * (analogicznie do trybu "Edycja Konkretnych Dni" w YourDraft.getCurrentDraft).
+ *
+ * Używane jako fallback, gdy w sessionStorage nie ma jeszcze roboczej wersji
+ * szablonów (np. pierwsze wejście w tej sesji przeglądarki, albo po powrocie
+ * do zakładki w nowej sesji) — bez tego "Szablony" pokazywały same zera mimo
+ * że drafty są poprawnie zapisane w bazie.
+ */
+export function buildTemplatesFromDrafts(
+  drafts: ResponseDemandDraftDTO[]
+): DayOfWeekTemplate[] {
+  return DEFAULT_DAY_TEMPLATES.map((template) => {
+    const matching = drafts.filter((d) => {
+      const cleanDateStr = d.draftDate.split('T')[0];
+      return parseDateFromBackend(cleanDateStr).getDay() === template.dayOfWeek;
+    });
+
+    if (matching.length === 0) {
+      return { ...template, hourlyDemand: Array(24).fill(0) };
+    }
+
+    const avgDemand = Array(24).fill(0);
+    matching.forEach((d) => {
+      const demandArray = typeof d.hourlyDemand === 'string'
+        ? JSON.parse(d.hourlyDemand)
+        : d.hourlyDemand;
+      demandArray.forEach((val: number, hour: number) => { avgDemand[hour] += val; });
+    });
+
+    return {
+      ...template,
+      hourlyDemand: avgDemand.map((val) => Math.round(val / matching.length)),
+    };
+  });
 }

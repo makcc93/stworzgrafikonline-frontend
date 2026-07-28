@@ -871,6 +871,7 @@ export default function YourDraft() {
               year={year}
               month={month}
               maxValue={maxStaffFromStore}
+              drafts={drafts}
               activeNonWarehouseCount={monthlyNormData?.activeNonWarehouseCount ?? activeNonWarehouseCount}
               totalEmployeeNorm={monthlyNormData?.totalEmployeeNorm ?? 0}
               confirmedDraftHours={confirmedDraftHours}
