@@ -746,30 +746,14 @@ export default function AdminPanel() {
 
   const handleChangeRole = async () => {
     if (!changeRoleModal) return;
-    // Validate required fields based on role
-    if (changeRoleForm.role === 'STORE_MANAGER' && !changeRoleForm.storeId) {
-      toast.error('Sklep jest wymagany dla Kierownika Sklepu'); return;
-    }
-    if (changeRoleForm.role === 'DIRECTOR') {
-      if (!changeRoleForm.directorScope) { toast.error('Zakres uprawnień jest wymagany'); return; }
-      if (changeRoleForm.directorScope === 'BRANCH' && !changeRoleForm.branchId) { toast.error('Oddział jest wymagany'); return; }
-      if (changeRoleForm.directorScope === 'REGION' && !changeRoleForm.regionId) { toast.error('Region jest wymagany'); return; }
-    }
     try {
       setSaving(true);
-      // TODO: Backend needs PUT/PATCH /api/users/{id}/role endpoint
-      await (userService as any).updateRole(changeRoleModal.id, {
-        role: changeRoleForm.role,
-        storeId: changeRoleForm.storeId,
-        directorScope: changeRoleForm.directorScope,
-        branchId: changeRoleForm.branchId,
-        regionId: changeRoleForm.regionId,
-      });
-      toast.success(`Uprawnienia użytkownika "${changeRoleModal.login}" zostały zmienione`);
+      await userService.setRole(changeRoleModal.id, changeRoleForm.role);
+      toast.success(`Rola użytkownika "${changeRoleModal.login}" została zmieniona na ${ROLE_LABELS[changeRoleForm.role]}`);
       await loadUsers();
       setChangeRoleModal(null);
     } catch (error: any) {
-      toast.error(error.message || 'Nie udało się zmienić uprawnień (brak endpointu w backendzie)');
+      toast.error(error.message || 'Nie udało się zmienić roli');
     } finally {
       setSaving(false);
     }
@@ -2289,82 +2273,24 @@ export default function AdminPanel() {
               </div>
 
               {changeRoleForm.role === 'STORE_MANAGER' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Sklep <span className="text-red-400">*</span></label>
-                  {loadingStores ? (
-                    <div className="px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-400 text-sm">Ładowanie sklepów...</div>
-                  ) : (
-                    <select
-                      value={changeRoleForm.storeId || ''}
-                      onChange={(e) => setChangeRoleForm({ ...changeRoleForm, storeId: e.target.value ? parseInt(e.target.value) : null })}
-                      className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    >
-                      <option value="">Wybierz sklep</option>
-                      {stores.filter(s => s.enable).sort((a, b) => a.name.localeCompare(b.name)).map(store => (
-                        <option key={store.id} value={store.id}>{store.name} ({store.storeCode}) — {store.branchName}</option>
-                      ))}
-                    </select>
-                  )}
+                <div className="flex items-center gap-2 p-3 bg-emerald-600/10 border border-emerald-600/30 rounded-lg">
+                  <Store className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  <p className="text-sm text-emerald-300">
+                    {changeRoleModal.storeId
+                      ? `Przypisany sklep pozostanie bez zmian: ${stores.find(s => s.id === changeRoleModal.storeId)?.name ?? `ID ${changeRoleModal.storeId}`}.`
+                      : 'Użytkownik nie ma obecnie przypisanego sklepu — zmiana roli tego nie zmieni.'}
+                  </p>
                 </div>
               )}
 
               {changeRoleForm.role === 'DIRECTOR' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Zakres uprawnień <span className="text-red-400">*</span></label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(['BRANCH', 'REGION', 'NETWORK'] as DirectorScope[]).map(scope => (
-                        <button
-                          key={scope}
-                          type="button"
-                          onClick={() => setChangeRoleForm({ ...changeRoleForm, directorScope: scope, branchId: null, regionId: null })}
-                          className={`px-3 py-2.5 rounded-lg border text-sm font-medium transition-all text-center ${
-                            changeRoleForm.directorScope === scope
-                              ? 'bg-purple-600/30 border-purple-500 text-purple-300'
-                              : 'bg-slate-700 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                          }`}
-                        >
-                          {DIRECTOR_SCOPE_LABELS[scope]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {changeRoleForm.directorScope === 'BRANCH' && (
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-2">Oddział <span className="text-red-400">*</span></label>
-                      <select
-                        value={changeRoleForm.branchId || ''}
-                        onChange={(e) => setChangeRoleForm({ ...changeRoleForm, branchId: e.target.value ? parseInt(e.target.value) : null })}
-                        className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      >
-                        <option value="">Wybierz oddział</option>
-                        {branches.filter(b => b.enable).sort((a, b) => a.name.localeCompare(b.name)).map(b => (
-                          <option key={b.id} value={b.id}>{b.name} — {b.regionName}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {changeRoleForm.directorScope === 'REGION' && (
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-2">Region <span className="text-red-400">*</span></label>
-                      <select
-                        value={changeRoleForm.regionId || ''}
-                        onChange={(e) => setChangeRoleForm({ ...changeRoleForm, regionId: e.target.value ? parseInt(e.target.value) : null })}
-                        className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      >
-                        <option value="">Wybierz region</option>
-                        {regions.filter(r => r.enable).sort((a, b) => a.name.localeCompare(b.name)).map(r => (
-                          <option key={r.id} value={r.id}>{r.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {changeRoleForm.directorScope === 'NETWORK' && (
-                    <div className="flex items-center gap-2 p-3 bg-purple-600/10 border border-purple-600/30 rounded-lg">
-                      <Globe className="w-4 h-4 text-purple-400 flex-shrink-0" />
-                      <p className="text-sm text-purple-300">Dyrektor Sieci ma dostęp do wszystkich sklepów i regionów.</p>
-                    </div>
-                  )}
+                <div className="flex items-center gap-2 p-3 bg-purple-600/10 border border-purple-600/30 rounded-lg">
+                  <Globe className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                  <p className="text-sm text-purple-300">
+                    {changeRoleModal.directorScope
+                      ? `Obecny zakres uprawnień pozostanie bez zmian: ${DIRECTOR_SCOPE_LABELS[changeRoleModal.directorScope]}.`
+                      : 'Użytkownik nie ma obecnie ustawionego zakresu uprawnień dyrektora — zmiana roli tego nie zmieni.'}
+                  </p>
                 </div>
               )}
 
@@ -2375,11 +2301,13 @@ export default function AdminPanel() {
                 </div>
               )}
 
-              <div className="p-3 bg-amber-600/10 border border-amber-600/30 rounded-lg">
-                <p className="text-xs text-amber-300">
-                  ⚠️ Ta operacja wymaga endpointu <code className="bg-amber-600/20 px-1 rounded">PATCH /api/users/{'{id}'}/role</code> w backendzie.
-                </p>
-              </div>
+              {changeRoleForm.role !== changeRoleModal.role && (
+                <div className="p-3 bg-amber-600/10 border border-amber-600/30 rounded-lg">
+                  <p className="text-xs text-amber-300">
+                    ℹ️ Ta operacja zmienia wyłącznie rolę. Przypisanie do sklepu / oddziału / regionu nie jest tym endpointem modyfikowane — jeśli po zmianie roli okaże się nieprawidłowe, wymaga to na razie ręcznej aktualizacji po stronie backendu.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="p-6 border-t border-slate-700 flex gap-3 justify-end">
               <button onClick={() => setChangeRoleModal(null)} disabled={saving} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50">Anuluj</button>
