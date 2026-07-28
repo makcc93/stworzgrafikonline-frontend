@@ -933,19 +933,6 @@ export default function AdminPanel() {
               );
             })}
           </div>
-
-          {/* Przycisk inicjalizacji — widoczny tylko na zakładce Użytkownicy */}
-          {activeTab === 'users' && (
-            <button
-              onClick={handleInitFirstStore}
-              disabled={loadingInit}
-              title="Utwórz domyślnych 15 pracowników dla sklepu nr 1 (GET /api/initializer/createFirstStoreEmployees)"
-              className="px-3 py-2 bg-amber-600/20 hover:bg-amber-600/30 border border-amber-600/40 text-amber-300 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-50 whitespace-nowrap flex-shrink-0"
-            >
-              <Play className="w-3.5 h-3.5" />
-              {loadingInit ? 'Inicjalizacja...' : 'Inicjalizuj sklep 1'}
-            </button>
-          )}
         </div>
       </div>
 
