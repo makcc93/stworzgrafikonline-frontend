@@ -107,10 +107,20 @@ export default function PrivacyPolicy() {
               lub wygaśnięciu sesji.
             </p>
             <p className="mt-2">
-              Aplikacja nie wykorzystuje obecnie żadnych narzędzi analitycznych ani marketingowych.
-              Jeżeli w przyszłości zostanie wdrożone narzędzie statystyk odwiedzin, niniejsza
-              polityka zostanie zaktualizowana o informacje na ten temat, w tym — jeśli będzie to
-              wymagane — o mechanizm zgody użytkownika.
+              Aplikacja korzysta z narzędzia <strong className="text-white">Cloudflare Web Analytics</strong>{' '}
+              do zbierania anonimowych, zagregowanych statystyk odwiedzin (np. liczba wejść,
+              przybliżona lokalizacja na poziomie kraju, typ urządzenia). Narzędzie to{' '}
+              <strong className="text-white">nie wykorzystuje plików cookies</strong> ani innych
+              identyfikatorów śledzących, nie tworzy profilu pojedynczego użytkownika i nie
+              pozwala na jego identyfikację. Więcej informacji:{' '}
+              <a
+                href="https://www.cloudflare.com/web-analytics/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 underline"
+              >
+                cloudflare.com/web-analytics
+              </a>.
             </p>
           </section>
 
