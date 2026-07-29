@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Lock, Mail, Building2, Warehouse } from 'lucide-react';
 import { LoginRequest, RegistrationRequest, RegistrationResponse } from '@shared/api';
 import { toast } from 'sonner';
@@ -383,6 +384,16 @@ export default function LoginPage({ onLoginSuccess, onCancel }: LoginPageProps) 
             >
               Wróć
             </motion.button>
+
+            <div className="flex items-center justify-center gap-3 text-xs text-slate-500 pt-2">
+              <Link to="/polityka-prywatnosci" className="hover:text-slate-300 transition-colors">
+                Polityka prywatności
+              </Link>
+              <span className="text-slate-700">•</span>
+              <Link to="/regulamin" className="hover:text-slate-300 transition-colors">
+                Regulamin
+              </Link>
+            </div>
           </div>
 
           <div className="relative mt-8">

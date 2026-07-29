@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { LogOut, User, KeyRound, Eye, EyeOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppContext } from '@/context/AppContext';
@@ -115,6 +116,16 @@ export default function AccountMenu() {
               <LogOut className="w-4 h-4" />
               Wyloguj się
             </button>
+
+            <div className="flex items-center justify-center gap-3 text-xs text-slate-500 pt-1">
+              <Link to="/polityka-prywatnosci" onClick={() => setIsOpen(false)} className="hover:text-slate-300 transition-colors">
+                Polityka prywatności
+              </Link>
+              <span className="text-slate-700">•</span>
+              <Link to="/regulamin" onClick={() => setIsOpen(false)} className="hover:text-slate-300 transition-colors">
+                Regulamin
+              </Link>
+            </div>
           </div>
         </div>
       )}

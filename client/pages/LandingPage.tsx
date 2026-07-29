@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import { Calendar, Users, Clock, TrendingUp } from 'lucide-react';
 
 interface LandingPageProps {
@@ -148,6 +149,16 @@ export default function LandingPage({ onCreateSchedule }: LandingPageProps) {
             </motion.div>
           ))}
         </motion.div>
+
+        <footer className="mt-16 pb-4 flex items-center justify-center gap-4 text-xs text-slate-500">
+          <Link to="/polityka-prywatnosci" className="hover:text-slate-300 transition-colors">
+            Polityka prywatności
+          </Link>
+          <span className="text-slate-700">•</span>
+          <Link to="/regulamin" className="hover:text-slate-300 transition-colors">
+            Regulamin
+          </Link>
+        </footer>
       </div>
     </div>
   );

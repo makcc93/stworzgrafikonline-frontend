@@ -10,6 +10,8 @@ import { AppProvider } from "@/context/AppContext";
 import Index from "./pages/Index";
 import ScheduleEditorPage from "./pages/ScheduleEditorPage";
 import AdminPage from "./pages/AdminPage";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
+import Regulamin from "./pages/Regulamin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,6 +27,8 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/schedule/:storeId/:monthId/:year" element={<ScheduleEditorPage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/polityka-prywatnosci" element={<PrivacyPolicy />} />
+            <Route path="/regulamin" element={<Regulamin />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Settings, Plus, Edit, Trash2, Search, AlertCircle, CalendarDays, Users, Eye, EyeOff, ShieldCheck, Store, Building2, Globe, UserCog, KeyRound, ShieldAlert, X, Play, Accessibility } from 'lucide-react';
 import { toast } from 'sonner';
 import { regionService, branchService, positionService, billingPeriodConfigService, userService, storeService, appInitializerService, specialWorkNormService } from '@/services/api-provider';
@@ -147,6 +148,9 @@ export default function AdminPanel() {
   const [specialWorkNormForm, setSpecialWorkNormForm] = useState<SpecialWorkNormFormData>(emptySpecialWorkNormForm());
   const [billingForm, setBillingForm]   = useState<BillingPeriodFormData>({ startMonth: 1, durationMonths: 3 });
   const [userForm, setUserForm]         = useState<CreateUserFormData>(emptyUserForm());
+  // Potwierdzenie przez admina, że pracownik został poinformowany o Regulaminie
+  // i Polityce prywatności — wymagane przed utworzeniem konta (patrz handleCreateUser).
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const [regionSearch, setRegionSearch]             = useState('');
@@ -638,6 +642,7 @@ export default function AdminPanel() {
   const openCreateUser = () => {
     setUserForm(emptyUserForm());
     setShowPassword(false);
+    setTermsAccepted(false);
     setModalMode('create');
   };
 
@@ -652,6 +657,7 @@ export default function AdminPanel() {
       if (userForm.directorScope === 'BRANCH' && !userForm.branchId) return 'Oddział jest wymagany dla Dyrektora Oddziału';
       if (userForm.directorScope === 'REGION' && !userForm.regionId) return 'Region jest wymagany dla Dyrektora Regionu';
     }
+    if (!termsAccepted) return 'Potwierdź, że pracownik został poinformowany o Regulaminie i Polityce prywatności';
     return null;
   };
 
@@ -2148,6 +2154,26 @@ export default function AdminPanel() {
                   <p className="text-sm text-red-300">Administrator ma pełny dostęp do systemu, w tym do panelu administracyjnego.</p>
                 </div>
               )}
+
+              <label className="flex items-start gap-3 p-3 bg-slate-700/30 border border-slate-600 rounded-lg cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0"
+                />
+                <span className="text-sm text-slate-300">
+                  Potwierdzam, że pracownik został poinformowany o{' '}
+                  <Link to="/regulamin" target="_blank" className="text-blue-400 hover:text-blue-300 underline">
+                    Regulaminie
+                  </Link>{' '}
+                  i{' '}
+                  <Link to="/polityka-prywatnosci" target="_blank" className="text-blue-400 hover:text-blue-300 underline">
+                    Polityce prywatności
+                  </Link>{' '}
+                  dotyczących przetwarzania jego danych w Aplikacji. <span className="text-red-400">*</span>
+                </span>
+              </label>
             </div>
 
             <div className="p-6 border-t border-slate-700 flex gap-3 justify-end">
@@ -2160,7 +2186,7 @@ export default function AdminPanel() {
               </button>
               <button
                 onClick={handleCreateUser}
-                disabled={saving}
+                disabled={saving || !termsAccepted}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 {saving ? (
