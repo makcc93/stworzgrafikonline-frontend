@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Lock, Mail, Building2, Warehouse } from 'lucide-react';
+import { Lock, Mail, Building2, Warehouse, Sparkles } from 'lucide-react';
 import { LoginRequest, RegistrationRequest, RegistrationResponse } from '@shared/api';
 import { toast } from 'sonner';
 import { useAppContext } from '@/context/AppContext';
@@ -21,6 +21,7 @@ export default function LoginPage({ onLoginSuccess, onCancel }: LoginPageProps) 
   const [email, setEmail] = useState('');
   const [warehouseNumber, setWarehouseNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isDemoLoading, setIsDemoLoading] = useState(false);
   const [error, setError] = useState('');
   const { setManagerData, setIsLoggedIn } = useAppContext();
 
@@ -67,6 +68,42 @@ export default function LoginPage({ onLoginSuccess, onCancel }: LoginPageProps) 
       toast.error(errorMessage);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setError('');
+    setIsDemoLoading(true);
+
+    try {
+      const response = await fetch('/api/demo', {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.token) {
+        localStorage.setItem('authToken', data.token);
+        toast.success('Utworzono sklep demonstracyjny');
+        setManagerData({ login: data.login, role: data.role, storeId: data.storeId, directorScope: data.directorScope ?? null, scopeName: data.scopeName ?? null });
+        setIsLoggedIn(true);
+        onLoginSuccess(data);
+      } else {
+        setError('Nie udało się utworzyć wersji demonstracyjnej');
+        toast.error('Nie udało się utworzyć wersji demonstracyjnej');
+      }
+    } catch (err: any) {
+      console.error('Demo login error:', err);
+      const errorMessage = err.message || 'Błąd sieci. Spróbuj ponownie.';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setIsDemoLoading(false);
     }
   };
 
@@ -256,15 +293,30 @@ export default function LoginPage({ onLoginSuccess, onCancel }: LoginPageProps) 
 
                 <motion.button
                   type="submit"
-                  disabled={isLoading || !login || !password}
+                  disabled={isLoading || isDemoLoading || !login || !password}
                   className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-semibold py-3 rounded-lg shadow-lg hover:shadow-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
-                  whileHover={{ scale: isLoading || !login || !password ? 1 : 1.02 }}
-                  whileTap={{ scale: isLoading || !login || !password ? 1 : 0.98 }}
+                  whileHover={{ scale: isLoading || isDemoLoading || !login || !password ? 1 : 1.02 }}
+                  whileTap={{ scale: isLoading || isDemoLoading || !login || !password ? 1 : 0.98 }}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.4 }}
                 >
                   {isLoading ? 'Logowanie...' : 'Zaloguj się'}
+                </motion.button>
+
+                <motion.button
+                  type="button"
+                  onClick={handleDemoLogin}
+                  disabled={isLoading || isDemoLoading}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-semibold py-3 rounded-lg shadow-lg hover:shadow-orange-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+                  whileHover={{ scale: isLoading || isDemoLoading ? 1 : 1.02 }}
+                  whileTap={{ scale: isLoading || isDemoLoading ? 1 : 0.98 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.5 }}
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {isDemoLoading ? 'Tworzenie sklepu demo...' : 'Wersja demonstracyjna'}
                 </motion.button>
 
                 <motion.div
