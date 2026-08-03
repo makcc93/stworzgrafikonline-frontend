@@ -45,6 +45,10 @@ export interface SetEnabledRequest {
   enabled: boolean;
 }
 
+export interface SetRoleRequest {
+  userRole: UserRole;
+}
+
 // ==================== SERVICE ====================
 
 export const userService = {
@@ -103,6 +107,25 @@ export const userService = {
    */
   setEnabled: async (id: number, enabled: boolean): Promise<void> => {
     await httpClient.patch<void>(API_CONFIG.ENDPOINTS.userEnabledById(id), { enabled });
+  },
+
+  /**
+   * Change user role
+   * PATCH /api/users/{id}/role
+   *
+   * Uwaga: backend zmienia wyłącznie pole `role`. Nie modyfikuje storeId/branchId/
+   * regionId/directorScope — te pozostają takie, jakie były przypisane wcześniej.
+   */
+  setRole: async (id: number, userRole: UserRole): Promise<UserResponse> => {
+    return await httpClient.patch<UserResponse>(API_CONFIG.ENDPOINTS.userRoleById(id), { userRole });
+  },
+
+  /**
+   * Delete a user
+   * DELETE /api/users/{id}
+   */
+  delete: async (id: number): Promise<void> => {
+    await httpClient.delete(API_CONFIG.ENDPOINTS.userById(id));
   },
 };
 

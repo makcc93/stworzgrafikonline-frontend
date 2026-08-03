@@ -706,13 +706,12 @@ export default function AdminPanel() {
   const handleDeleteUser = async (id: number) => {
     try {
       setDeleting(id);
-      // TODO: Backend needs DELETE /api/users/{id} endpoint
-      await (userService as any).delete(id);
+      await userService.delete(id);
       toast.success('Użytkownik usunięty');
       await loadUsers();
       setDeleteConfirm(null);
     } catch (error: any) {
-      toast.error(error.message || 'Nie udało się usunąć użytkownika (brak endpointu DELETE w backendzie)');
+      toast.error(error.message || 'Nie udało się usunąć użytkownika');
     } finally {
       setDeleting(null);
     }
