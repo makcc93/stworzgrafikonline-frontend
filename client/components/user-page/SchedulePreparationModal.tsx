@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
   X,
   Check,
@@ -24,6 +24,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import ShiftHourConfigStep from './ShiftHourConfigStep';
 import EmployeeHoursConfirmationStep from './EmployeeHoursConfirmationStep';
+import GeneratingOverlay, { type GenerationStage } from './GeneratingOverlay';
 import { scheduleService } from '@/services/api/schedule.service';
 import {
   vacationService,
@@ -179,94 +180,6 @@ function StatTile({ icon, label, value, sub, color, loading }: StatTileProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Scanning loader — animowany "laser" przesuwający się po ekranie, zostawiający
-// za sobą neonową poświatę i iskry. Zastępuje statyczny spinner na czas
-// generowania grafiku.
-// ---------------------------------------------------------------------------
-
-const SCAN_DURATION = 2.2; // sekundy — pełny przebieg linii od lewej do prawej
-
-function ScanningLoader() {
-  // Stałe pozycje iskier — liczone raz, żeby nie "skakały" przy każdym renderze.
-  const sparks = useMemo(
-    () =>
-      Array.from({ length: 16 }, (_, i) => ({
-        id: i,
-        leftPct: 4 + Math.random() * 92,
-        topPct: 8 + Math.random() * 84,
-        size: 2 + Math.random() * 3,
-      })),
-    [],
-  );
-
-  return (
-    <div className="relative w-full h-32 overflow-hidden rounded-xl bg-slate-950/50 border border-slate-700/50">
-      {/* Delikatna siatka w tle — sugeruje "skanowaną" powierzchnię */}
-      <div
-        className="absolute inset-0 opacity-[0.08]"
-        style={{
-          backgroundImage:
-            'linear-gradient(90deg, #38bdf8 1px, transparent 1px), linear-gradient(#38bdf8 1px, transparent 1px)',
-          backgroundSize: '16px 16px',
-        }}
-      />
-
-      {/* Neonowa poświata podążająca za linią skanującą */}
-      <motion.div
-        className="absolute top-0 bottom-0 w-28"
-        style={{
-          background: 'linear-gradient(90deg, transparent, rgba(56,189,248,0.35), transparent)',
-        }}
-        animate={{ left: ['-10%', '100%'] }}
-        transition={{ duration: SCAN_DURATION, repeat: Infinity, ease: 'easeInOut' }}
-      />
-
-      {/* Sama linia skanująca */}
-      <motion.div
-        className="absolute top-0 bottom-0 w-[2px]"
-        style={{
-          background: '#7dd3fc',
-          boxShadow: '0 0 8px 2px rgba(125,211,252,0.9), 0 0 24px 6px rgba(56,189,248,0.55)',
-        }}
-        animate={{ left: ['0%', '100%'] }}
-        transition={{ duration: SCAN_DURATION, repeat: Infinity, ease: 'easeInOut' }}
-      />
-
-      {/* Iskry — zapalają się w chwili, gdy linia przez nie przechodzi */}
-      {sparks.map((s) => (
-        <motion.span
-          key={s.id}
-          className="absolute rounded-full bg-sky-300"
-          style={{
-            left: `${s.leftPct}%`,
-            top: `${s.topPct}%`,
-            width: s.size,
-            height: s.size,
-            boxShadow: '0 0 6px 2px rgba(125,211,252,0.85)',
-          }}
-          animate={{ opacity: [0, 1, 0], scale: [0.4, 1, 0.4] }}
-          transition={{
-            duration: 0.6,
-            repeat: Infinity,
-            repeatDelay: Math.max(SCAN_DURATION - 0.6, 0.1),
-            delay: (s.leftPct / 100) * SCAN_DURATION,
-            ease: 'easeOut',
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-const SCAN_MESSAGES = [
-  'Skanowanie obsady…',
-  'Sprawdzanie zgodności z normami…',
-  'Układanie zmian…',
-  'Weryfikacja urlopów i delegacji…',
-  'Finalizowanie grafiku…',
-];
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -296,19 +209,9 @@ export default function SchedulePreparationModal({
   const [isLastMonthOfPeriod, setIsLastMonthOfPeriod] = useState(false);
   const [checkingPeriod, setCheckingPeriod] = useState(false);
 
-  // Rotujące komunikaty pokazywane na ekranie skanowania podczas generowania
-  const [scanMessageIndex, setScanMessageIndex] = useState(0);
-
-  useEffect(() => {
-    if (!isGenerating) {
-      setScanMessageIndex(0);
-      return;
-    }
-    const interval = setInterval(() => {
-      setScanMessageIndex((i) => (i + 1) % SCAN_MESSAGES.length);
-    }, 1800);
-    return () => clearInterval(interval);
-  }, [isGenerating]);
+  // Etap procesu generowania — sterowany realnymi wywołaniami API
+  // (baza danych → algorytm → eksport), pokazywany na overlayu.
+  const [generationStage, setGenerationStage] = useState<GenerationStage>('db');
 
   const monthName = MONTH_NAMES[selectedMonth] ?? '';
   const allChecked = checkedItems.size === CHECKLIST_ITEMS.length;
@@ -463,7 +366,8 @@ export default function SchedulePreparationModal({
 
 	const handleGenerateAndDownload = async () => {
 	  setIsGenerating(true);
-	  const toastId = toast.loading('Tworzenie grafiku w bazie…');
+	  setGenerationStage('db');
+	  const toastId = toast.loading('Generowanie grafiku…');
 	  try {
 	    const created = await scheduleService.create(storeId, {
 	      year: selectedYear,
@@ -471,12 +375,10 @@ export default function SchedulePreparationModal({
 	      scheduleStatusName: 'IN_PROGRESS',
 	    });
 
-	    toast.loading('Uruchamianie algorytmu…', { id: toastId });
-
+	    setGenerationStage('algorithm');
 	    await scheduleService.generate(storeId, created.id);
 
-	    toast.loading('Pobieranie pliku…', { id: toastId });
-
+	    setGenerationStage('export');
 	    const { downloadUrl, filename } = await scheduleService.exportFromDatabase(storeId, created.id);
 	    const a = document.createElement('a');
 	    a.href = downloadUrl;
@@ -497,6 +399,7 @@ export default function SchedulePreparationModal({
 	    toast.error(`Błąd: ${msg}`, { id: toastId });
 	  } finally {
 	    setIsGenerating(false);
+	    setGenerationStage('db');
 	  }
 	};
 
@@ -856,28 +759,7 @@ export default function SchedulePreparationModal({
         </div>
 
         {/* Generating overlay */}
-        {isGenerating && (
-          <div className="absolute inset-0 z-20 bg-slate-900/90 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center gap-5 px-8">
-            <div className="text-center space-y-1">
-              <p className="text-white font-medium text-sm">Generowanie grafiku</p>
-              <AnimatePresence mode="wait">
-                <motion.p
-                  key={scanMessageIndex}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.25 }}
-                  className="text-slate-400 text-xs"
-                >
-                  {SCAN_MESSAGES[scanMessageIndex]}
-                </motion.p>
-              </AnimatePresence>
-            </div>
-            <div className="w-full max-w-xs">
-              <ScanningLoader />
-            </div>
-          </div>
-        )}
+        {isGenerating && <GeneratingOverlay stage={generationStage} />}
       </motion.div>
     </div>
   );
