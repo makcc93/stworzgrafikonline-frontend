@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { X, Loader, ChevronLeft, ChevronRight, Download, FileText, Clock, CalendarDays, Users, Briefcase } from 'lucide-react';
 import { toast } from 'sonner';
 import { scheduleService } from '@/services/api/schedule.service';
-import { employeeService } from '@/services/api-provider';
+import { employeeService, draftService } from '@/services/api-provider';
 import { storeDeliveryService } from '@/services/api/store-delivery.service';
 import { computeShiftHours, normalizeToTimeString } from '@/utils/shiftNormalize';
+import { formatDateForBackend } from '@/utils/draft.utils';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
 import type { ResponseScheduleDetailsDTO, ShiftCode } from '@/types/schedule.types';
 import type { ResponseStoreDeliveryDTO } from '@/types/store-delivery.types';
@@ -61,6 +62,35 @@ function getDow(year: number, month: number, day: number): string {
 
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate();
+}
+
+/**
+ * Liczy realną liczbę weekendów w miesiącu — sobota + niedziela występujące
+ * razem liczą się jako JEDEN weekend (a nie dwa dni). Obsługuje też przypadki
+ * brzegowe, gdy miesiąc zaczyna się w niedzielę (bez poprzedzającej soboty
+ * w tym samym miesiącu) albo kończy się w sobotę (bez następującej niedzieli).
+ * Dla typowego miesiąca zwraca 4 lub 5.
+ */
+function countWeekendsInMonth(year: number, month: number, days: number): number {
+  let count = 0;
+  let precededBySaturday = false;
+
+  for (let day = 1; day <= days; day++) {
+    const dow = new Date(year, month, day).getDay();
+    if (dow === 6) {
+      // Sobota — zawsze zaczyna nowy weekend
+      count += 1;
+      precededBySaturday = true;
+    } else if (dow === 0) {
+      // Niedziela — dolicz tylko, jeśli nie była poprzedzona sobotą w tym miesiącu
+      if (!precededBySaturday) count += 1;
+      precededBySaturday = false;
+    } else {
+      precededBySaturday = false;
+    }
+  }
+
+  return count;
 }
 
 /**
@@ -232,8 +262,12 @@ export default function ScheduleViewer({
   const [rows, setRows]                 = useState<EmployeeRow[]>([]);
   const [downloading, setDownloading]   = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  // Realna liczba dni pracy sklepu w tym miesiącu — dni, dla których zaplanowano
+  // zapotrzebowanie w drafcie (suma hourlyDemand > 0). null, dopóki się nie załaduje.
+  const [realWorkDaysCount, setRealWorkDaysCount] = useState<number | null>(null);
 
   const days = daysInMonth(year, month);
+  const weekendsInMonthCount = countWeekendsInMonth(year, month, days);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -374,6 +408,26 @@ export default function ScheduleViewer({
         });
 
       setRows(builtRows);
+
+      // 6. Realna liczba dni pracy sklepu w tym miesiącu — na podstawie draftu
+      //    (zapotrzebowania), a nie sumy dni przepracowanych przez wszystkich
+      //    pracowników. Dzień liczy się jako "dzień pracy", jeśli suma
+      //    hourlyDemand w danym dniu jest > 0.
+      try {
+        const startDate = formatDateForBackend(new Date(year, month, 1));
+        const endDate   = formatDateForBackend(new Date(year, month, days));
+        const draftsPage = await draftService.getByDateRange(storeId, startDate, endDate, { size: 62 });
+        const drafts = draftsPage?.content ?? [];
+        const realDays = drafts.filter(
+          (d) => d.hourlyDemand.reduce((sum, v) => sum + v, 0) > 0,
+        ).length;
+        setRealWorkDaysCount(realDays);
+      } catch (e) {
+        // Brak draftu nie powinien blokować podglądu grafiku — po prostu nie
+        // pokażemy tej statystyki.
+        console.error('[ScheduleViewer] draft load error', e);
+        setRealWorkDaysCount(null);
+      }
     } catch (e) {
       console.error('[ScheduleViewer] load error', e);
       toast.error('Nie udało się załadować grafiku');
@@ -425,9 +479,7 @@ export default function ScheduleViewer({
   };
 
   // ── Summary stats ────────────────────────────────────────────────────────
-  const totalHoursAll       = rows.reduce((s, r) => s + r.totalHours, 0);
-  const totalWorkDaysAll    = rows.reduce((s, r) => s + r.workDays, 0);
-  const totalWeekendDaysAll = rows.reduce((s, r) => s + r.weekendDays, 0);
+  const totalHoursAll = rows.reduce((s, r) => s + r.totalHours, 0);
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -645,11 +697,13 @@ export default function ScheduleViewer({
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-300">
                 <CalendarDays className="w-4 h-4 text-blue-400" />
-                <span>{totalWorkDaysAll} dni pracy</span>
+                <span>
+                  {realWorkDaysCount !== null ? realWorkDaysCount : '—'} dni pracy
+                </span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-300">
                 <Briefcase className="w-4 h-4 text-amber-400" />
-                <span>{totalWeekendDaysAll} weekendów</span>
+                <span>{weekendsInMonthCount} weekendów</span>
               </div>
 
               {/* Legenda */}
