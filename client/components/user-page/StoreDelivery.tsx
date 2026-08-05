@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, type ReactNode } from 'react';
+import React, { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Truck,
   Users,
@@ -240,6 +241,32 @@ export default function StoreDelivery() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<number | null>(null);
   const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
 
+  // ── Portal dropdownu wyboru pracownika ────────────────────────
+  // Dropdown renderujemy przez portal do document.body, bo GLASS_PANEL
+  // (backdrop-blur-xl) tworzy nowy stacking context — bez portalu dropdown
+  // z z-index'em i tak "wpadał" pod kolejny panel (Harmonogram dostaw),
+  // który jako sibling renderuje się nad całym kontekstem tego panelu.
+  const employeeDropdownAnchorRef = useRef<HTMLDivElement>(null);
+  const employeeDropdownPortalRef = useRef<HTMLDivElement>(null);
+  const [employeeDropdownPos, setEmployeeDropdownPos] = useState<{ top: number; right: number } | null>(null);
+
+  const updateEmployeeDropdownPosition = useCallback(() => {
+    const rect = employeeDropdownAnchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setEmployeeDropdownPos({
+      top: rect.bottom + 8, // odpowiednik mt-2
+      right: window.innerWidth - rect.right, // wyrównanie do prawej krawędzi przycisku (jak wcześniejsze right-0)
+    });
+  }, []);
+
+  const toggleEmployeeDropdown = () => {
+    setShowEmployeeDropdown((v) => {
+      const next = !v;
+      if (next) updateEmployeeDropdownPosition();
+      return next;
+    });
+  };
+
   // ── Punkt odniesienia do wykrywania zmian ────────────────────
   const [savedEmployeeId, setSavedEmployeeId] = useState<number | null>(null);
   const [savedSchedule, setSavedSchedule] = useState<ScheduleState>(buildDefaultSchedule);
@@ -302,18 +329,31 @@ export default function StoreDelivery() {
     loadData();
   }, [loadData]);
 
-  // ── Zamknij dropdown po kliknięciu poza nim ──────────────────
+  // ── Zamknij dropdown po kliknięciu poza nim (przycisk LUB portal) ──
   useEffect(() => {
     if (!showEmployeeDropdown) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Element;
-      if (!target.closest('[data-employee-dropdown]')) {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const clickedAnchor = employeeDropdownAnchorRef.current?.contains(target);
+      const clickedPortal = employeeDropdownPortalRef.current?.contains(target);
+      if (!clickedAnchor && !clickedPortal) {
         setShowEmployeeDropdown(false);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showEmployeeDropdown]);
+
+  // ── Trzymaj dropdown "przyklejony" do przycisku przy scrollu/resize ──
+  useEffect(() => {
+    if (!showEmployeeDropdown) return;
+    window.addEventListener('scroll', updateEmployeeDropdownPosition, true);
+    window.addEventListener('resize', updateEmployeeDropdownPosition);
+    return () => {
+      window.removeEventListener('scroll', updateEmployeeDropdownPosition, true);
+      window.removeEventListener('resize', updateEmployeeDropdownPosition);
+    };
+  }, [showEmployeeDropdown, updateEmployeeDropdownPosition]);
 
   // ── Zapis ────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -526,18 +566,22 @@ export default function StoreDelivery() {
               </div>
 
               {/* Dropdown wyboru */}
-              <div className="relative" data-employee-dropdown>
+              <div className="relative" ref={employeeDropdownAnchorRef}>
                 <button
                   type="button"
-                  onClick={() => setShowEmployeeDropdown((v) => !v)}
+                  onClick={toggleEmployeeDropdown}
                   className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
                 >
                   <Users className="h-4 w-4" />
                   Zmień
                 </button>
 
-                {showEmployeeDropdown && (
-                  <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-slate-600 bg-slate-800/95 backdrop-blur-xl shadow-2xl shadow-black/40">
+                {showEmployeeDropdown && employeeDropdownPos && createPortal(
+                  <div
+                    ref={employeeDropdownPortalRef}
+                    style={{ position: 'fixed', top: employeeDropdownPos.top, right: employeeDropdownPos.right, zIndex: 9999 }}
+                    className="w-72 rounded-xl border border-slate-600 bg-slate-800/95 backdrop-blur-xl shadow-2xl shadow-black/40"
+                  >
                     <div className="border-b border-slate-700 px-3 py-2.5">
                       <p className="text-xs font-semibold uppercase tracking-wide text-purple-400">
                         Wybierz pracownika
@@ -598,7 +642,8 @@ export default function StoreDelivery() {
                         </>
                       )}
                     </div>
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
             </div>
