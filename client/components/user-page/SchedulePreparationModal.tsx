@@ -87,7 +87,7 @@ const CHECKLIST_ITEMS: ChecklistItem[] = [
   {
     id: 'team-config',
     label: 'Konfiguracja zespołu',
-    description: 'Każdy pracownik ma wyznaczoną odpowiednią Rolę oraz zdefiniowane Uprawienienia',
+    description: 'Każdy pracownik ma zdefiniowaną Rolę oraz odpowiednie Uprawienienia',
     icon: <ShieldCheck className="w-5 h-5 text-indigo-400" />,
   },
   {
