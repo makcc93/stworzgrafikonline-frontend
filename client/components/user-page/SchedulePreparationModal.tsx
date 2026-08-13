@@ -12,6 +12,7 @@ import {
   Loader2,
   Zap,
   Users,
+  ShieldCheck,
   Plane,
   Briefcase,
   BarChart3,
@@ -40,7 +41,7 @@ import {
 
 type ModalStep = 'checklist' | 'shift-hour-config' | 'hours-confirmation' | 'summary';
 
-type ChecklistItemId = 'vacations' | 'delegations' | 'proposals' | 'draft';
+type ChecklistItemId = 'team-config' | 'vacations' | 'delegations' | 'proposals' | 'draft';
 
 interface ChecklistItem {
   id: ChecklistItemId;
@@ -83,6 +84,12 @@ const MONTH_NAMES = [
 ];
 
 const CHECKLIST_ITEMS: ChecklistItem[] = [
+  {
+    id: 'team-config',
+    label: 'Konfiguracja zespołu',
+    description: 'Upewnij się, że każdy Twój pracownik ma wyznaczoną odpowiednią Rolę oraz zostały zdefiniowane jego Uprawienienia',
+    icon: <ShieldCheck className="w-5 h-5 text-indigo-400" />,
+  },
   {
     id: 'vacations',
     label: 'Urlopy pracowników',
@@ -283,7 +290,7 @@ export default function SchedulePreparationModal({
   };
 
   const handleNavigateItem = (item: ChecklistItem) => {
-    if (item.id === 'delegations') { handleClose(); return; }
+    if (item.id === 'delegations' || item.id === 'team-config') { handleClose(); return; }
     onNavigateToTab(item.id as 'vacations' | 'proposals' | 'draft');
     handleClose();
   };
@@ -364,7 +371,7 @@ export default function SchedulePreparationModal({
   // Generate
   // ---------------------------------------------------------------------------
 
-	const handleGenerateAndDownload = async () => {
+	const handleGenerate = async () => {
 	  setIsGenerating(true);
 	  setGenerationStage('db');
 	  const toastId = toast.loading('Generowanie grafiku…');
@@ -379,15 +386,8 @@ export default function SchedulePreparationModal({
 	    await scheduleService.generate(storeId, created.id);
 
 	    setGenerationStage('export');
-	    const { downloadUrl, filename } = await scheduleService.exportFromDatabase(storeId, created.id);
-	    const a = document.createElement('a');
-	    a.href = downloadUrl;
-	    a.download = filename;
-	    document.body.appendChild(a);
-	    a.click();
-	    a.remove();
 
-	    toast.success('Grafik wygenerowany! Plik pobrany.', { id: toastId });
+	    toast.success('Grafik wygenerowany!', { id: toastId });
 
 	    setStep('checklist');
 	    setCheckedItems(new Set());
@@ -735,7 +735,7 @@ export default function SchedulePreparationModal({
                   </button>
 
                   <button
-                    onClick={handleGenerateAndDownload}
+                    onClick={handleGenerate}
                     disabled={isGenerating || summaryLoading}
                     className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-all hover:shadow-lg hover:shadow-green-500/30 hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
                   >
