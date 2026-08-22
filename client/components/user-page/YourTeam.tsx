@@ -781,7 +781,7 @@ export default function YourTeam() {
                 <div>
                   <div className="flex items-center gap-2 mb-2.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
-                    <p className="text-[11px] text-amber-300 font-semibold uppercase tracking-widest">Uprawnienia</p>
+                    <p className="text-[11px] text-amber-300 font-semibold uppercase tracking-widest">Zadania pełnione na zmianie</p>
                   </div>
                   <div className="flex flex-wrap gap-2 pl-3 border-l-2 border-amber-500/25">
                     {permissionItems.map(({ key, label }) => (
