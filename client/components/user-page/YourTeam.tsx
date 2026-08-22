@@ -287,41 +287,142 @@ export default function YourTeam() {
   };
 
   const toggleRole = async (
-    employeeId: number,
-    roleKey: 'manager' | 'seller' | 'cashier' | 'pok' | 'warehouseman' | 'enable' |
-      'canOperateCheckout' | 'canOperateCredit' | 'canOpenCloseStore' | 'canOperateDelivery'
-  ) => {
-    if (!currentStoreId) return;
-    try {
-      const employee = employees.find((e) => e.id === employeeId);
-      if (!employee) return;
+  employeeId: number,
+  roleKey:
+    | 'manager'
+    | 'seller'
+    | 'cashier'
+    | 'pok'
+    | 'warehouseman'
+    | 'enable'
+    | 'canOperateCheckout'
+    | 'canOperateCredit'
+    | 'canOpenCloseStore'
+    | 'canOperateDelivery'
+) => {
+  if (!currentStoreId) return;
 
-      const updateData: UpdateEmployeeDTO = {
+  try {
+    const employee = employees.find((e) => e.id === employeeId);
+    if (!employee) return;
+
+    const isMainRole =
+      roleKey === 'manager' ||
+      roleKey === 'seller' ||
+      roleKey === 'cashier' ||
+      roleKey === 'pok' ||
+      roleKey === 'warehouseman';
+
+    let updateData: UpdateEmployeeDTO;
+
+    if (isMainRole) {
+      /*
+       * Główne role są wzajemnie wykluczające.
+       *
+       * Kliknięcie:
+       *   Kierownik -> manager=true, cała reszta=false
+       *   Kasjer    -> cashier=true, cała reszta=false
+       *   Sprzedawca -> seller=true, cała reszta=false
+       *
+       * Ponowne kliknięcie aktywnej roli pozwala pozostawić
+       * pracownika bez głównej roli.
+       */
+      const roleIsCurrentlyActive = employee[roleKey];
+
+      updateData = {
         enable: employee.enable,
+
         canOperateCheckout: employee.canOperateCheckout,
         canOperateCredit: employee.canOperateCredit,
         canOpenCloseStore: employee.canOpenCloseStore,
         canOperateDelivery: employee.canOperateDelivery,
-        seller: employee.seller,
-        manager: employee.manager,
-        cashier: employee.cashier,
-        warehouseman: employee.warehouseman,
-        pok: employee.pok,
+
+        manager: roleKey === 'manager' && !roleIsCurrentlyActive,
+        seller: roleKey === 'seller' && !roleIsCurrentlyActive,
+        cashier: roleKey === 'cashier' && !roleIsCurrentlyActive,
+        pok: roleKey === 'pok' && !roleIsCurrentlyActive,
+        warehouseman:
+          roleKey === 'warehouseman' && !roleIsCurrentlyActive,
+
         isSpecial: employee.isSpecial ?? false,
         etatNumerator: employee.etatNumerator ?? 1,
         etatDenominator: employee.etatDenominator ?? 1,
-        [roleKey]: !employee[roleKey],
-        updatedAt: new Date().toISOString()
-      };
 
-      const updated = await employeeService.update(currentStoreId, employeeId, updateData);
-      setEmployees((prev) =>
-        prev.map((emp) => emp.id === employeeId ? { ...updated, positionName: getPositionName(updated) } : emp)
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Nie udało się zmienić uprawnienia');
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      /*
+       * Pozostałe uprawnienia nie są wzajemnie wykluczające.
+       * Tutaj zmieniamy tylko kliknięte uprawnienie.
+       */
+      updateData = {
+        enable:
+          roleKey === 'enable'
+            ? !employee.enable
+            : employee.enable,
+
+        canOperateCheckout:
+          roleKey === 'canOperateCheckout'
+            ? !employee.canOperateCheckout
+            : employee.canOperateCheckout,
+
+        canOperateCredit:
+          roleKey === 'canOperateCredit'
+            ? !employee.canOperateCredit
+            : employee.canOperateCredit,
+
+        canOpenCloseStore:
+          roleKey === 'canOpenCloseStore'
+            ? !employee.canOpenCloseStore
+            : employee.canOpenCloseStore,
+
+        canOperateDelivery:
+          roleKey === 'canOperateDelivery'
+            ? !employee.canOperateDelivery
+            : employee.canOperateDelivery,
+
+        manager: employee.manager,
+        seller: employee.seller,
+        cashier: employee.cashier,
+        warehouseman: employee.warehouseman,
+        pok: employee.pok,
+
+        isSpecial: employee.isSpecial ?? false,
+        etatNumerator: employee.etatNumerator ?? 1,
+        etatDenominator: employee.etatDenominator ?? 1,
+
+        updatedAt: new Date().toISOString(),
+      };
     }
-  };
+
+    const updated = await employeeService.update(
+      currentStoreId,
+      employeeId,
+      updateData
+    );
+
+    /*
+     * Aktualizujemy lokalny stan dokładnie odpowiedzią z backendu.
+     * Dzięki temu UI nie powinien trzymać starych wartości ról.
+     */
+    setEmployees((prev) =>
+      prev.map((emp) =>
+        emp.id === employeeId
+          ? {
+              ...updated,
+              positionName: getPositionName(updated),
+            }
+          : emp
+      )
+    );
+  } catch (err) {
+    toast.error(
+      err instanceof Error
+        ? err.message
+        : 'Nie udało się zmienić uprawnienia'
+    );
+  }
+};
 
   // Tooltip informacyjny przy etykietach ról/uprawnień — wzorzec identyczny
   // jak w komponencie PeriodEstimation.tsx używanym w YourDraft.tsx.
