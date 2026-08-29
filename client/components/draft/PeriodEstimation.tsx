@@ -103,10 +103,10 @@ export function PeriodEstimation({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs text-xs">
-                Szacowana liczba godzin pracy na osobę zależna od planowania obsady.
+                Szacowana liczba godzin pracy na osobę zależna od planowania obsady. Wartość ta nie uwzględnia urlopów i delegacji.
               </TooltipContent>
             </Tooltip>
-          </div>
+          </div> 
 
           <p className="text-4xl font-black text-blue-300 font-mono">
             {confirmedPerEmployee}

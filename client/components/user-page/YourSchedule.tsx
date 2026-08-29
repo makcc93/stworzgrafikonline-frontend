@@ -41,7 +41,7 @@ interface ScheduleEntry extends ScheduleMonth {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function YourSchedule() {
-  const { storeId, selectedStoreId, draftYear, setActiveTab } = useAppContext();
+  const { selectedStoreId, draftYear, setActiveTab } = useAppContext();
   const navigate = useNavigate();
   const [selectedYear, setSelectedYear] = useState(draftYear);
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
@@ -77,7 +77,30 @@ export default function YourSchedule() {
     'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
   ];
 
-  const resolvedStoreId = (selectedStoreId ?? parseInt(storeId as string, 10)) || 1;
+  /**
+   * Jedyne źródło prawdy dla aktualnie wybranego sklepu — tak samo jak w
+   * pozostałych zakładkach (Vacations, Delegations, EmployeeProposals,
+   * StoreDelivery, YourDraft, YourTeam), które używają `selectedStoreId ?? 0`.
+   *
+   * BUG, który to naprawia: poprzednia wersja miała fallback
+   * `(selectedStoreId ?? parseInt(storeId, 10)) || 1`. `storeId` to legacy
+   * pole z kontekstu z domyślną wartością `'store-1'` (parsuje się do NaN),
+   * więc realnie za każdym razem, gdy `selectedStoreId` było chwilowo `null`
+   * (np. tuż po twardym odświeżeniu strony u ADMIN/DIRECTOR, zanim UserPage
+   * zdąży dociągnąć listę sklepów i wywołać `setSelectedStoreId`), komponent
+   * po cichu przełączał się na SKLEP O ID 1 — zamiast pokazać stan
+   * ładowania/pusty. Jeśli sklep 1 (np. demo) miał gotowe grafiki, użytkownik
+   * widział kafelek "Gotowy", a chwilę później `resolvedStoreId` wracało do
+   * właściwego, wybranego w dropdownie sklepu — więc kliknięcie w "Podgląd
+   * grafiku" otwierało `ScheduleViewer` z POPRAWNYM storeId, ale
+   * scheduleId należącym do sklepu 1 → backend nie znajdował dopasowania →
+   * pusty podgląd, mimo że kafelek mówił "Gotowy".
+   *
+   * `0` jako fallback jest bezpieczny: żaden realny sklep nie ma takiego ID,
+   * więc `if (!resolvedStoreId) return;` poniżej (i w fetchYearlyHours)
+   * poprawnie wstrzymuje fetch zamiast pobierać dane przypadkowego sklepu.
+   */
+  const resolvedStoreId = selectedStoreId ?? 0;
 
   /**
    * Śledzi, dla którego sklepu aktualnie mamy załadowane `schedules`.
@@ -274,7 +297,7 @@ export default function YourSchedule() {
       'draftTabState',
       JSON.stringify({ activeTab: 'draft', monthId: parseInt(monthId), year })
     );
-    navigate(`/schedule/${storeId}/${monthId}/${year}`);
+    navigate(`/schedule/${resolvedStoreId}/${monthId}/${year}`);
   };
 
   // Called after modal successfully generates schedule — passes new scheduleId
