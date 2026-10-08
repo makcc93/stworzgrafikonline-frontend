@@ -98,7 +98,7 @@ export default function LandingPage({ onCreateSchedule }: LandingPageProps) {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.3 }}
           >
-            <span className="relative z-10">Utwórz Grafik</span>
+            <span className="relative z-10">Zaczynamy!</span>
             <motion.div
               className="absolute inset-0 bg-gradient-to-r from-cyan-600 to-blue-600 rounded-2xl"
               initial={{ opacity: 0 }}
