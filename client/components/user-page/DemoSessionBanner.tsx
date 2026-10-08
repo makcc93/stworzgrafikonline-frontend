@@ -206,16 +206,16 @@ export default function DemoSessionBanner() {
     remainingSeconds <= 5 * 60;
 
   return (
-	<div
-	  className={`pointer-events-none fixed bottom-4 left-1/2 z-[100] -translate-x-1/2 flex items-center gap-3 rounded-xl border px-4 py-3 shadow-2xl backdrop-blur-md ${
-	    isEndingSoon
-	      ? "border-amber-400/50 bg-amber-950/90 text-amber-100"
-	      : "border-blue-400/40 bg-slate-900/90 text-slate-100"
-	  }`}
-	  role="status"
-	  aria-live="polite"
-	  title={`Sesja demo wygaśnie: ${expiresAt}`}
-	>
+    <div
+  className={`pointer-events-none fixed bottom-4 left-1/2 z-[100] -translate-x-1/2 flex items-center gap-3 rounded-xl border px-4 py-3 		shadow-2xl backdrop-blur-md ${
+    isEndingSoon
+      ? "border-amber-400/50 bg-amber-950/90 text-amber-100"
+      : "border-blue-400/40 bg-slate-900/90 text-slate-100"
+  }`}
+  role="status"
+  aria-live="polite"
+  title={`Sesja demo wygaśnie: ${expiresAt}`}
+>
       <div
         className={`flex h-9 w-9 items-center justify-center rounded-lg ${
           isEndingSoon
