@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppProvider } from "@/context/AppContext";
+import DemoSessionBanner from "@/components/user-page/DemoSessionBanner";
 import Index from "./pages/Index";
 import ScheduleEditorPage from "./pages/ScheduleEditorPage";
 import AdminPage from "./pages/AdminPage";
@@ -22,6 +23,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        <DemoSessionBanner />
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
