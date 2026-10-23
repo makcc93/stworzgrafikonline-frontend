@@ -1,51 +1,134 @@
-import { useAppContext } from '@/context/AppContext';
-import { useState, useEffect } from 'react';
-import LandingPage from './LandingPage';
-import LoginPage from './LoginPage';
-import UserPage from './UserPage';
+import {
+  useState,
+  useEffect,
+} from "react";
 
-type PageState = 'landing' | 'login' | 'user';
+import { toast } from "sonner";
+
+import { useAppContext } from "@/context/AppContext";
+import {
+  storageUtils,
+  STORAGE_KEYS,
+} from "@/utils/storage";
+
+import LandingPage from "./LandingPage";
+import LoginPage from "./LoginPage";
+import UserPage from "./UserPage";
+
+type PageState =
+  | "landing"
+  | "login"
+  | "user";
 
 export default function Index() {
-  const { showUserPage, setShowUserPage, setIsLoggedIn, isLoggedIn } = useAppContext();
-  // WAŻNE: isLoggedIn (localStorage) i showUserPage (sessionStorage) są celowo
-  // persystowane w AppContext właśnie po to, żeby przetrwać odświeżenie strony.
-  // Musimy je odczytać już w inicjalizatorze useState — bez tego currentPage
-  // zawsze startowało od 'landing' przy każdym mount (czyli też po F5), mimo
-  // że użytkownik był cały czas zalogowany, i strona "resetowała się" do
-  // ekranu startowego zamiast wracać tam, gdzie użytkownik był.
-  const [currentPage, setCurrentPage] = useState<PageState>(() =>
-    isLoggedIn && showUserPage ? 'user' : 'landing'
+  const {
+    showUserPage,
+    setShowUserPage,
+    setIsLoggedIn,
+    isLoggedIn,
+  } = useAppContext();
+
+  const [
+    currentPage,
+    setCurrentPage,
+  ] = useState<PageState>(() =>
+    isLoggedIn && showUserPage
+      ? "user"
+      : "landing"
   );
 
-  // Handle logout - redirect to landing
   useEffect(() => {
-    if (!isLoggedIn && currentPage === 'user') {
-      setCurrentPage('landing');
+    const notice =
+      storageUtils.get<string>(
+        STORAGE_KEYS.SESSION_NOTICE,
+        "session"
+      );
+
+    if (!notice) {
+      return;
     }
-  }, [isLoggedIn, currentPage]);
+
+    storageUtils.remove(
+      STORAGE_KEYS.SESSION_NOTICE,
+      "session"
+    );
+
+    if (notice === "demo-expired") {
+      toast.info(
+        "Wersja demonstracyjna wygasła. Możesz uruchomić nowe demo.",
+        {
+          id: "demo-expired",
+        }
+      );
+
+      return;
+    }
+
+    if (
+      notice === "session-expired"
+    ) {
+      toast.error(
+        "Sesja wygasła. Zaloguj się ponownie.",
+        {
+          id: "session-expired",
+        }
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !isLoggedIn &&
+      currentPage === "user"
+    ) {
+      setCurrentPage("landing");
+    }
+  }, [
+    isLoggedIn,
+    currentPage,
+  ]);
 
   const handleCreateSchedule = () => {
-    setCurrentPage('login');
+    setCurrentPage("login");
   };
 
-  const handleLoginSuccess = (userData: any) => {
+  const handleLoginSuccess = (
+    userData: any
+  ) => {
     setIsLoggedIn(true);
     setShowUserPage(true);
-    setCurrentPage('user');
+    setCurrentPage("user");
   };
 
   const handleLoginCancel = () => {
-    setCurrentPage('landing');
+    setCurrentPage("landing");
   };
 
-  if (currentPage === 'user' && isLoggedIn) {
+  if (
+    currentPage === "user" &&
+    isLoggedIn
+  ) {
     return <UserPage />;
   }
 
-  if (currentPage === 'login') {
-    return <LoginPage onLoginSuccess={handleLoginSuccess} onCancel={handleLoginCancel} />;
+  if (currentPage === "login") {
+    return (
+      <LoginPage
+        onLoginSuccess={
+          handleLoginSuccess
+        }
+        onCancel={
+          handleLoginCancel
+        }
+      />
+    );
   }
 
-  return <LandingPage onCreateSchedule={handleCreateSchedule} />;
+  return (
+    <LandingPage
+      onCreateSchedule={
+        handleCreateSchedule
+      }
+    />
+  );
 }

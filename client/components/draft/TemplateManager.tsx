@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { PeriodEstimation } from './PeriodEstimation';
 import { Loader, Copy, Save, AlertCircle, ChevronUp, ChevronDown, Moon, Sun } from 'lucide-react';
 import { toast } from 'sonner';
@@ -43,25 +43,43 @@ interface TemplateManagerProps {
 }
 
 /**
- * Klucz sessionStorage dla szablonów danego sklepu/roku/miesiąca.
- * Szablony są przechowywane lokalnie w sesji, niezależnie od draftów konkretnych dni.
+ * Klucz sessionStorage dla NIEZAPISANYCH zmian szablonów danego sklepu/roku/miesiąca.
+ *
+ * Źródłem prawdy są drafty w bazie. sessionStorage trzyma wyłącznie roboczą kopię
+ * niezapisanych edycji (żeby nie zniknęły np. po przełączeniu trybu na "Edycja
+ * Konkretnych Dni"). Kopia jest powiązana z "podpisem" stanu bazy, z którego
+ * powstała (baseSignature) — jeśli baza zmieniła się w międzyczasie (np. admin
+ * zapisał szablony dla tego sklepu), kopia jest nieaktualna i zostaje odrzucona.
  */
 function getTemplateStorageKey(storeId: number, year: number, month: number): string {
   return `dayTemplates_${storeId}_${year}_${month}`;
 }
 
-function loadTemplatesFromStorage(storeId: number, year: number, month: number): DayOfWeekTemplate[] | null {
+interface StoredTemplates {
+  baseSignature: string;
+  templates: DayOfWeekTemplate[];
+}
+
+/** Podpis stanu szablonów zbudowanych z bazy — do wykrywania nieaktualnej kopii roboczej. */
+function computeSignature(templates: DayOfWeekTemplate[]): string {
+  return JSON.stringify(templates.map(t => [t.dayOfWeek, t.hourlyDemand]));
+}
+
+function loadTemplatesFromStorage(storeId: number, year: number, month: number): StoredTemplates | null {
   try {
     const raw = sessionStorage.getItem(getTemplateStorageKey(storeId, year, month));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Weryfikacja: musi być tablica z 7 elementami zawierającymi hourlyDemand[24]
+    // Weryfikacja: obiekt { baseSignature, templates } — 7 elementów z hourlyDemand[24].
+    // (Stary format — sama tablica, bez podpisu — jest odrzucany jako nieaktualny.)
     if (
-      Array.isArray(parsed) &&
-      parsed.length === DEFAULT_DAY_TEMPLATES.length &&
-      parsed.every((t: any) => Array.isArray(t.hourlyDemand) && t.hourlyDemand.length === 24)
+      parsed &&
+      typeof parsed.baseSignature === 'string' &&
+      Array.isArray(parsed.templates) &&
+      parsed.templates.length === DEFAULT_DAY_TEMPLATES.length &&
+      parsed.templates.every((t: any) => Array.isArray(t.hourlyDemand) && t.hourlyDemand.length === 24)
     ) {
-      return parsed as DayOfWeekTemplate[];
+      return parsed as StoredTemplates;
     }
     return null;
   } catch {
@@ -69,11 +87,26 @@ function loadTemplatesFromStorage(storeId: number, year: number, month: number):
   }
 }
 
-function saveTemplatesToStorage(storeId: number, year: number, month: number, templates: DayOfWeekTemplate[]): void {
+function saveTemplatesToStorage(
+  storeId: number,
+  year: number,
+  month: number,
+  templates: DayOfWeekTemplate[],
+  baseSignature: string
+): void {
   try {
-    sessionStorage.setItem(getTemplateStorageKey(storeId, year, month), JSON.stringify(templates));
+    const payload: StoredTemplates = { baseSignature, templates };
+    sessionStorage.setItem(getTemplateStorageKey(storeId, year, month), JSON.stringify(payload));
   } catch {
     // Ignoruj błędy sessionStorage (np. tryb prywatny z pełną pamięcią)
+  }
+}
+
+function clearTemplatesFromStorage(storeId: number, year: number, month: number): void {
+  try {
+    sessionStorage.removeItem(getTemplateStorageKey(storeId, year, month));
+  } catch {
+    // ignoruj
   }
 }
 
@@ -107,38 +140,76 @@ export function TemplateManager({
   // poprzednio wybranej opcji, mimo że logicznie powinien wrócić do placeholdera.
   const [copySourceDay, setCopySourceDay] = useState<string>('');
 
+  // Drafty wyłącznie bieżącego sklepu. Przy przełączaniu sklepu rodzic na chwilę
+  // nadal może przekazać drafty poprzedniego sklepu (czyści je dopiero w swoim efekcie).
+  const storeDrafts = useMemo(
+    () => drafts.filter(d => d.storeId === storeId),
+    [drafts, storeId]
+  );
+
+  // Szablony zbudowane z bazy (uśrednione per dzień tygodnia) + ich podpis.
+  const dbTemplates = useMemo(() => buildTemplatesFromDrafts(storeDrafts), [storeDrafts]);
+  const dbSignature = useMemo(() => computeSignature(dbTemplates), [dbTemplates]);
+  const dbSignatureRef = useRef(dbSignature);
+  dbSignatureRef.current = dbSignature;
+
+  // true, gdy użytkownik ma w tym komponencie niezapisane edycje szablonów.
+  // Dopóki true, odświeżenie draftów z rodzica NIE nadpisuje jego pracy.
+  const dirtyRef = useRef(false);
+
+  /** Jedyne miejsce zapisujące edycję: stan + kopia robocza w sessionStorage + flagi. */
+  const applyEdit = useCallback((updater: (prev: DayOfWeekTemplate[]) => DayOfWeekTemplate[]) => {
+    dirtyRef.current = true;
+    setTemplates(prev => {
+      const updated = updater(prev);
+      saveTemplatesToStorage(storeId, year, month, updated, dbSignatureRef.current);
+      return updated;
+    });
+    setHasChanges(true);
+  }, [storeId, year, month]);
+
+  // Zmiana sklepu / miesiąca → zaczynamy od zera (porzucamy flagę edycji poprzedniego widoku).
+  // Musi być zadeklarowany PRZED efektem poniżej — efekty odpalają się w kolejności deklaracji.
+  useEffect(() => {
+    dirtyRef.current = false;
+    setHasChanges(false);
+    setLoadingTemplates(!!storeId);
+  }, [storeId, year, month]);
+
   /**
-   * Inicjalizacja szablonów:
-   * 1. Sprawdź sessionStorage — jeśli użytkownik już edytował szablony w tej sesji
-   *    przeglądarki, odtwórz je dokładnie takie jakie były (robocza wersja,
-   *    niezależna od tego co jest w bazie, żeby edycja konkretnego dnia jej nie nadpisywała).
-   * 2. Jeśli w tej sesji przeglądarki nie ma jeszcze zapisu (pierwsze wejście,
-   *    nowa sesja, wyczyszczone dane) → zbuduj szablony z rzeczywistych draftów
-   *    zapisanych w bazie (uśrednione per dzień tygodnia). Bez tego kroku po
-   *    powrocie do zakładki "Szablony" w nowej sesji słupki pokazywały same
-   *    zera, mimo że drafty były poprawnie zapisane w bazie.
-   * 3. Dopiero gdy w bazie też nic nie ma dla danego dnia tygodnia → zera.
+   * Synchronizacja szablonów z bazą. Źródłem prawdy są drafty z bazy:
+   * 1. Użytkownik ma niezapisane edycje w tym komponencie (dirtyRef) → nic nie ruszamy.
+   * 2. Jest kopia robocza w sessionStorage:
+   *    - powstała ze stanu bazy identycznego z obecnym (podpis się zgadza) → przywracamy
+   *      niezapisane edycje (np. po powrocie z trybu "Edycja Konkretnych Dni"),
+   *    - baza zmieniła się od tamtej pory (np. admin zapisał szablony) → kopia jest
+   *      nieaktualna, kasujemy ją i pokazujemy dane z bazy.
+   *    - drafty jeszcze się ładują (pusta lista) → nie ma z czym porównać, kopię
+   *      zostawiamy i oceniamy ją, gdy drafty dotrą.
+   * 3. Brak kopii → szablony z bazy (zera, gdy dla dnia tygodnia nie ma draftów).
+   * Efekt odpala się też przy zmianie `drafts` (np. po zapisie albo po załadowaniu).
    */
   useEffect(() => {
     if (!storeId) { setLoadingTemplates(false); return; }
-
-    setLoadingTemplates(true);
-    setHasChanges(false);
+    if (dirtyRef.current) { setLoadingTemplates(false); return; }
 
     const stored = loadTemplatesFromStorage(storeId, year, month);
     if (stored) {
-      setTemplates(stored);
-    } else {
-      const fromDrafts = buildTemplatesFromDrafts(drafts);
-      setTemplates(fromDrafts);
+      const draftsStillLoading = storeDrafts.length === 0;
+      if (draftsStillLoading || stored.baseSignature === dbSignature) {
+        dirtyRef.current = true;
+        setTemplates(stored.templates);
+        setHasChanges(true);
+        setLoadingTemplates(false);
+        return;
+      }
+      clearTemplatesFromStorage(storeId, year, month);
     }
 
+    setTemplates(dbTemplates);
+    setHasChanges(false);
     setLoadingTemplates(false);
-    // `drafts` celowo pominięte w deps — chcemy przeliczyć fallback tylko przy
-    // zmianie sklepu/miesiąca, nie przy każdym odświeżeniu drafts[] z rodzica
-    // (inaczej nadpisywałoby to niezapisane zmiany szablonu w trakcie edycji).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId, year, month]);
+  }, [storeId, year, month, storeDrafts, dbTemplates, dbSignature]);
 
   const maxCap = Math.max(maxValue, 1);
   const currentTemplate = templates.find(t => t.dayOfWeek === selectedTemplate);
@@ -151,18 +222,12 @@ export function TemplateManager({
   const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const setHourValue = useCallback((hour: number, newVal: number) => {
-    setTemplates(prev => {
-      const updated = prev.map(t =>
-        t.dayOfWeek === selectedTemplate
-          ? { ...t, hourlyDemand: t.hourlyDemand.map((v, i) => i === hour ? Math.max(0, Math.min(maxCap, Math.round(newVal))) : v) }
-          : t
-      );
-      // Zapisz do sessionStorage przy każdej zmianie wartości
-      saveTemplatesToStorage(storeId, year, month, updated);
-      return updated;
-    });
-    setHasChanges(true);
-  }, [selectedTemplate, maxCap, storeId, year, month]);
+    applyEdit(prev => prev.map(t =>
+      t.dayOfWeek === selectedTemplate
+        ? { ...t, hourlyDemand: t.hourlyDemand.map((v, i) => i === hour ? Math.max(0, Math.min(maxCap, Math.round(newVal))) : v) }
+        : t
+    ));
+  }, [selectedTemplate, maxCap, applyEdit]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (dragging === null) return;
@@ -234,6 +299,10 @@ export function TemplateManager({
       if (errors > 0) toast.warning(`Zapisano ${saved} draftów, ${errors} błędów`);
       else toast.success(`Zapisano ${saved} draftów`);
 
+      // Zapis do bazy zakończony — kopia robocza przestaje być potrzebna, a od tej chwili
+      // źródłem prawdy znów są drafty (rodzica przeładuje je w onTemplatesSaved).
+      clearTemplatesFromStorage(storeId, year, month);
+      dirtyRef.current = false;
       setHasChanges(false);
       onTemplatesSaved(); // rodzic przeładuje drafts[] → confirmedDraftHours się zaktualizuje
     } catch (err) {
@@ -355,12 +424,7 @@ export function TemplateManager({
               setCopySourceDay(sourceValue);
               const source = templates.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
               if (source) {
-                setTemplates(prev => {
-                  const updated = prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: [...source.hourlyDemand] } : t);
-                  saveTemplatesToStorage(storeId, year, month, updated);
-                  return updated;
-                });
-                setHasChanges(true);
+                applyEdit(prev => prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: [...source.hourlyDemand] } : t));
                 toast.success('Skopiowano!');
                 setCopySourceDay('');
               }
@@ -482,12 +546,7 @@ export function TemplateManager({
       <div className="p-5 bg-slate-900 border-t border-slate-700">
         <div className="flex flex-wrap gap-2">
           <button onClick={() => {
-            setTemplates(prev => {
-              const updated = prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: Array(24).fill(0) } : t);
-              saveTemplatesToStorage(storeId, year, month, updated);
-              return updated;
-            });
-            setHasChanges(true);
+            applyEdit(prev => prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: Array(24).fill(0) } : t));
           }}
             className="px-4 py-2 bg-slate-900 text-red-500 border border-red-900/50 text-xs rounded-xl font-black hover:bg-red-600 hover:text-white">
             WYCZYŚĆ

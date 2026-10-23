@@ -13,6 +13,7 @@ import AdminPage from "./pages/AdminPage";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import Regulamin from "./pages/Regulamin";
 import NotFound from "./pages/NotFound";
+import DemoSessionBanner from "@/components/user-page/DemoSessionBanner";
 
 const queryClient = new QueryClient();
 
@@ -22,14 +23,22 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        <DemoSessionBanner />
+
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
-            <Route path="/schedule/:storeId/:monthId/:year" element={<ScheduleEditorPage />} />
+            <Route
+              path="/schedule/:storeId/:monthId/:year"
+              element={<ScheduleEditorPage />}
+            />
             <Route path="/admin" element={<AdminPage />} />
-            <Route path="/polityka-prywatnosci" element={<PrivacyPolicy />} />
+            <Route
+              path="/polityka-prywatnosci"
+              element={<PrivacyPolicy />}
+            />
             <Route path="/regulamin" element={<Regulamin />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
@@ -38,10 +47,11 @@ const App = () => (
   </QueryClientProvider>
 );
 
-// Store root instance to prevent multiple createRoot calls during HMR
 let root = (window as any).__root;
+
 if (!root) {
   root = createRoot(document.getElementById("root")!);
   (window as any).__root = root;
 }
+
 root.render(<App />);
