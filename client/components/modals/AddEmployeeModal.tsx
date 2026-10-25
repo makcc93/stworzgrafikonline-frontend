@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, User, Loader } from 'lucide-react';
 import type { CreateEmployeeDTO, Position } from '@/types/employee.types';
-import { EMPLOYEE_VALIDATION } from '@/utils/employee.utils';
+import { validateEmployeeName, validateSapString } from '@/utils/employee.utils';
 
 interface AddEmployeeModalProps {
   isOpen: boolean;
@@ -31,48 +31,22 @@ export function AddEmployeeModal({
   const [positionId, setPositionId] = useState('');
   const [errors, setErrors] = useState<FormErrors>({});
 
-  // Validation helpers
-  const validateFirstName = (value: string): string | undefined => {
-    if (!value.trim()) {
-      return 'Imię jest wymagane';
+  // Formularz czyścimy przy każdym otwarciu — komponent jest cały czas zamontowany,
+  // więc bez tego po "Anuluj" wracały stare dane i komunikaty błędów.
+  useEffect(() => {
+    if (isOpen) {
+      setFirstName('');
+      setLastName('');
+      setSap('');
+      setPositionId('');
+      setErrors({});
     }
-    if (value.length < EMPLOYEE_VALIDATION.firstName.minLength) {
-      return `Imię musi zawierać co najmniej ${EMPLOYEE_VALIDATION.firstName.minLength} znaki`;
-    }
-    if (value.length > EMPLOYEE_VALIDATION.firstName.maxLength) {
-      return `Imię może zawierać maksymalnie ${EMPLOYEE_VALIDATION.firstName.maxLength} znaków`;
-    }
-    if (!EMPLOYEE_VALIDATION.firstName.pattern.test(value)) {
-      return 'Imię może zawierać tylko litery, spacje i myślniki';
-    }
-    return undefined;
-  };
+  }, [isOpen]);
 
-  const validateLastName = (value: string): string | undefined => {
-    if (!value.trim()) {
-      return 'Nazwisko jest wymagane';
-    }
-    if (value.length < EMPLOYEE_VALIDATION.lastName.minLength) {
-      return `Nazwisko musi zawierać co najmniej ${EMPLOYEE_VALIDATION.lastName.minLength} znaki`;
-    }
-    if (value.length > EMPLOYEE_VALIDATION.lastName.maxLength) {
-      return `Nazwisko może zawierać maksymalnie ${EMPLOYEE_VALIDATION.lastName.maxLength} znaków`;
-    }
-    if (!EMPLOYEE_VALIDATION.lastName.pattern.test(value)) {
-      return 'Nazwisko może zawierać tylko litery, spacje i myślniki';
-    }
-    return undefined;
-  };
-
-  const validateSap = (value: string): string | undefined => {
-    if (!value.trim()) {
-      return 'Numer SAP jest wymagany';
-    }
-    if (!/^\d{8}$/.test(value)) {
-      return 'Numer SAP musi zawierać dokładnie 8 cyfr';
-    }
-    return undefined;
-  };
+  // Validation helpers (wspólne reguły imienia/nazwiska/SAP: utils/employee.utils)
+  const validateFirstName = (value: string): string | undefined => validateEmployeeName(value, 'firstName');
+  const validateLastName = (value: string): string | undefined => validateEmployeeName(value, 'lastName');
+  const validateSap = (value: string): string | undefined => validateSapString(value);
 
   const validatePositionId = (value: string): string | undefined => {
     if (!value) {
@@ -86,44 +60,37 @@ export function AddEmployeeModal({
 
   const handleFirstNameChange = (value: string) => {
     setFirstName(value);
-    if (value) {
-      setErrors((prev) => ({
-        ...prev,
-        firstName: validateFirstName(value),
-      }));
-    }
+    setErrors((prev) => ({
+      ...prev,
+      firstName: value ? validateFirstName(value) : undefined,
+    }));
   };
 
   const handleLastNameChange = (value: string) => {
     setLastName(value);
-    if (value) {
-      setErrors((prev) => ({
-        ...prev,
-        lastName: validateLastName(value),
-      }));
-    }
+    setErrors((prev) => ({
+      ...prev,
+      lastName: value ? validateLastName(value) : undefined,
+    }));
   };
 
   const handleSapChange = (value: string) => {
     // Only allow digits
     const digitsOnly = value.replace(/\D/g, '').slice(0, 8);
     setSap(digitsOnly);
-    if (digitsOnly) {
-      setErrors((prev) => ({
-        ...prev,
-        sap: validateSap(digitsOnly),
-      }));
-    }
+    // Po wyczyszczeniu pola stary komunikat błędu znika (wcześniej zostawał).
+    setErrors((prev) => ({
+      ...prev,
+      sap: digitsOnly ? validateSap(digitsOnly) : undefined,
+    }));
   };
 
   const handlePositionIdChange = (value: string) => {
     setPositionId(value);
-    if (value) {
-      setErrors((prev) => ({
-        ...prev,
-        positionId: validatePositionId(value),
-      }));
-    }
+    setErrors((prev) => ({
+      ...prev,
+      positionId: value ? validatePositionId(value) : undefined,
+    }));
   };
 
   const validateForm = (): boolean => {
@@ -174,13 +141,13 @@ export function AddEmployeeModal({
   };
 
   const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
+    if (e.target === e.currentTarget && !loading) {
       onClose();
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && !loading) {
       onClose();
     }
   };
@@ -190,9 +157,9 @@ export function AddEmployeeModal({
     !errors.lastName &&
     !errors.sap &&
     !errors.positionId &&
-    firstName.trim() &&
-    lastName.trim() &&
-    sap.length === 8 &&
+    !validateFirstName(firstName) &&
+    !validateLastName(lastName) &&
+    !validateSap(sap) &&
     positionId;
 
   if (!isOpen) return null;
