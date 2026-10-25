@@ -24,11 +24,16 @@ export function DraftChart({ draft, onSave, maxValue, openHour, closeHour }: Dra
   const [dragging, setDragging] = useState<number | null>(null);
   const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // Synchronizacja z propsami
-  useEffect(() => { 
-    setLocalDraft([...draft]); 
-    setHasChanges(false); 
-  }, [draft]);
+  // Synchronizacja z propsami — po ZAWARTOŚCI draftu, nie po referencji tablicy.
+  // Rodzic (YourDraft.getCurrentDraft) zwraca nową tablicę przy każdym renderze (np. zera dla dnia
+  // bez zapisanego draftu), więc zależność od `draft` kasowała niezapisane zmiany użytkownika przy
+  // każdym odświeżeniu rodzica. Zmiana dnia/sklepu/miesiąca resetuje komponent przez `key` w rodzicu.
+  const draftKey = draft.join(',');
+  useEffect(() => {
+    setLocalDraft([...draft]);
+    setHasChanges(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
 
   // Zakres godzin: 6-22 (dzienne) lub 0-23 (pełne)
   const displayedHours = showNightHours 
@@ -114,7 +119,7 @@ export function DraftChart({ draft, onSave, maxValue, openHour, closeHour }: Dra
           <div className="relative flex items-end" style={{ height: 260 }}>
             <div className="flex-1 flex items-end gap-1.5 h-full border-b-2 border-slate-800 pb-10">
               {displayedHours.map((hour, index) => {
-                const value = localDraft[hour];
+                const value = localDraft[hour] ?? 0;
                 const heightPct = (value / limit) * 100;
                 const isNight = hour < 6 || hour > 22;
 
@@ -218,13 +223,13 @@ export function DraftChart({ draft, onSave, maxValue, openHour, closeHour }: Dra
             {displayedHours.map((hour) => (
               <div key={hour} className="flex-1 flex flex-col gap-1">
                 <button 
-                  onClick={() => setValue(hour, localDraft[hour] + 1)}
+                  onClick={() => setValue(hour, (localDraft[hour] ?? 0) + 1)}
                   className="h-7 bg-slate-800/80 hover:bg-emerald-500 text-white rounded-md flex items-center justify-center border border-slate-700 transition-colors"
                 >
                   <ChevronUp className="w-3 h-3" />
                 </button>
                 <button 
-                  onClick={() => setValue(hour, localDraft[hour] - 1)}
+                  onClick={() => setValue(hour, (localDraft[hour] ?? 0) - 1)}
                   className="h-7 bg-slate-800/80 hover:bg-red-500 text-white rounded-md flex items-center justify-center border border-slate-700 transition-colors"
                 >
                   <ChevronDown className="w-3 h-3" />

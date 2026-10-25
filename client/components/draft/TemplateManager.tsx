@@ -17,9 +17,7 @@ interface TemplateManagerProps {
   month: number;
   maxValue?: number;
   onTemplatesSaved: () => void;
-  /** Aktualne drafty miesiąca z rodzica (YourDraft) — używane jako fallback do
-   *  zbudowania szablonów z rzeczywistych danych zapisanych w bazie, gdy
-   *  w sessionStorage nie ma jeszcze roboczej wersji szablonów. */
+  /** Aktualne drafty miesiąca z rodzica (YourDraft) — źródło prawdy dla szablonów. */
   drafts: ResponseDemandDraftDTO[];
   // — dane z rodzica (YourDraft) — reaktywne na zapis z obu trybów —
   activeNonWarehouseCount: number;
@@ -31,7 +29,7 @@ interface TemplateManagerProps {
   totalDelegationDays: number;
   warehousemanName?: string | null;
   /** true w ostatnim miesiącu okresu rozliczeniowego — wtedy totalEmployeeNorm to suma
-   *  potwierdzonych godzin (nie norma etatu) i zapis szablonów jest blokowany, jeśli
+   *  potwierdzonych godzin (nie norma etatu) i zapis szablonu jest blokowany, jeśli
    *  przekroczyłby ten budżet. */
   isLastMonthOfPeriod?: boolean;
   /** Godzina otwarcia sklepu dla aktualnie wybranego dnia tygodnia (np. 9 dla 09:00) */
@@ -42,72 +40,97 @@ interface TemplateManagerProps {
   onDayOfWeekChange?: (dayOfWeek: number) => void;
 }
 
-/**
- * Klucz sessionStorage dla NIEZAPISANYCH zmian szablonów danego sklepu/roku/miesiąca.
- *
- * Źródłem prawdy są drafty w bazie. sessionStorage trzyma wyłącznie roboczą kopię
- * niezapisanych edycji (żeby nie zniknęły np. po przełączeniu trybu na "Edycja
- * Konkretnych Dni"). Kopia jest powiązana z "podpisem" stanu bazy, z którego
- * powstała (baseSignature) — jeśli baza zmieniła się w międzyczasie (np. admin
- * zapisał szablony dla tego sklepu), kopia jest nieaktualna i zostaje odrzucona.
- */
+// ============================================================
+// Niezapisane edycje (sessionStorage)
+//
+// Źródłem prawdy są drafty w bazie. sessionStorage trzyma wyłącznie roboczą kopię
+// NIEZAPISANYCH edycji, osobno dla każdego dnia tygodnia, żeby nie znikły np. po
+// przełączeniu trybu na "Edycja Konkretnych Dni". Każdy dzień ma "podpis" stanu bazy,
+// z którego powstała edycja (baseSignature) — jeśli baza zmieniła się w międzyczasie
+// (np. admin zapisał ten dzień), kopia jest nieaktualna i zostaje odrzucona.
+// ============================================================
+
+/** dzień tygodnia (0-6) → podpis stanu bazy z momentu rozpoczęcia edycji tego dnia */
+type DirtyBase = Record<number, string>;
+
+interface StoredDay {
+  baseSignature: string;
+  hourlyDemand: number[];
+}
+
 function getTemplateStorageKey(storeId: number, year: number, month: number): string {
   return `dayTemplates_${storeId}_${year}_${month}`;
 }
 
-interface StoredTemplates {
-  baseSignature: string;
-  templates: DayOfWeekTemplate[];
+function daySignature(hourlyDemand: number[]): string {
+  return JSON.stringify(hourlyDemand);
 }
 
-/** Podpis stanu szablonów zbudowanych z bazy — do wykrywania nieaktualnej kopii roboczej. */
-function computeSignature(templates: DayOfWeekTemplate[]): string {
-  return JSON.stringify(templates.map(t => [t.dayOfWeek, t.hourlyDemand]));
+function toDemandArray(hourlyDemand: number[] | string): number[] {
+  if (typeof hourlyDemand === 'string') {
+    try { return JSON.parse(hourlyDemand); } catch { return Array(24).fill(0); }
+  }
+  return hourlyDemand;
 }
 
-function loadTemplatesFromStorage(storeId: number, year: number, month: number): StoredTemplates | null {
+function sumDemand(hourlyDemand: number[] | string): number {
+  return toDemandArray(hourlyDemand).reduce((a, b) => a + b, 0);
+}
+
+function normalizeDate(draftDate: string): string {
+  return draftDate.split('T')[0];
+}
+
+function loadStoredDays(storeId: number, year: number, month: number): Record<number, StoredDay> | null {
   try {
     const raw = sessionStorage.getItem(getTemplateStorageKey(storeId, year, month));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Weryfikacja: obiekt { baseSignature, templates } — 7 elementów z hourlyDemand[24].
-    // (Stary format — sama tablica, bez podpisu — jest odrzucany jako nieaktualny.)
-    if (
-      parsed &&
-      typeof parsed.baseSignature === 'string' &&
-      Array.isArray(parsed.templates) &&
-      parsed.templates.length === DEFAULT_DAY_TEMPLATES.length &&
-      parsed.templates.every((t: any) => Array.isArray(t.hourlyDemand) && t.hourlyDemand.length === 24)
-    ) {
-      return parsed as StoredTemplates;
+    // Stary format (cała tablica 7 szablonów albo { baseSignature, templates }) nie ma pola `days`
+    // — jest odrzucany jako nieaktualny.
+    if (!parsed || typeof parsed.days !== 'object' || parsed.days === null) return null;
+
+    const result: Record<number, StoredDay> = {};
+    for (const [key, value] of Object.entries<any>(parsed.days)) {
+      const dow = Number(key);
+      if (
+        Number.isInteger(dow) && dow >= 0 && dow <= 6 &&
+        value && typeof value.baseSignature === 'string' &&
+        Array.isArray(value.hourlyDemand) && value.hourlyDemand.length === 24
+      ) {
+        result[dow] = { baseSignature: value.baseSignature, hourlyDemand: value.hourlyDemand };
+      }
     }
-    return null;
+    return Object.keys(result).length > 0 ? result : null;
   } catch {
     return null;
   }
 }
 
-function saveTemplatesToStorage(
+/** Zapisuje do sessionStorage tylko dni z niezapisanymi zmianami; gdy ich nie ma — czyści klucz. */
+function persistDirtyDays(
   storeId: number,
   year: number,
   month: number,
   templates: DayOfWeekTemplate[],
-  baseSignature: string
+  dirtyBase: DirtyBase
 ): void {
   try {
-    const payload: StoredTemplates = { baseSignature, templates };
-    sessionStorage.setItem(getTemplateStorageKey(storeId, year, month), JSON.stringify(payload));
+    const key = getTemplateStorageKey(storeId, year, month);
+    const days: Record<number, StoredDay> = {};
+    for (const t of templates) {
+      const base = dirtyBase[t.dayOfWeek];
+      if (base !== undefined) days[t.dayOfWeek] = { baseSignature: base, hourlyDemand: t.hourlyDemand };
+    }
+    if (Object.keys(days).length === 0) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, JSON.stringify({ days }));
   } catch {
     // Ignoruj błędy sessionStorage (np. tryb prywatny z pełną pamięcią)
   }
 }
 
-function clearTemplatesFromStorage(storeId: number, year: number, month: number): void {
-  try {
-    sessionStorage.removeItem(getTemplateStorageKey(storeId, year, month));
-  } catch {
-    // ignoruj
-  }
+function emptyTemplates(): DayOfWeekTemplate[] {
+  return DEFAULT_DAY_TEMPLATES.map(t => ({ ...t, hourlyDemand: Array(24).fill(0) }));
 }
 
 export function TemplateManager({
@@ -128,10 +151,11 @@ export function TemplateManager({
   closeHour,
   onDayOfWeekChange,
 }: TemplateManagerProps) {
-  const [templates, setTemplates] = useState<DayOfWeekTemplate[]>(DEFAULT_DAY_TEMPLATES);
+  const [templates, setTemplates] = useState<DayOfWeekTemplate[]>(emptyTemplates);
+  /** Dni tygodnia z niezapisanymi zmianami (klucz = dayOfWeek). */
+  const [dirtyBase, setDirtyBase] = useState<DirtyBase>({});
   const [selectedTemplate, setSelectedTemplate] = useState<number>(1);
   const [saving, setSaving] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [showNightHours, setShowNightHours] = useState(false);
   // Stan selecta "Kopiuj z dnia...". Bez tego React traktowałby <select> jako
@@ -140,6 +164,16 @@ export function TemplateManager({
   // poprzednio wybranej opcji, mimo że logicznie powinien wrócić do placeholdera.
   const [copySourceDay, setCopySourceDay] = useState<string>('');
 
+  // Lustra stanu w refach — handlery (przeciąganie słupków, zapis po await) zawsze czytają
+  // aktualne wartości, bez ryzyka zdezaktualizowanego closure.
+  const templatesRef = useRef<DayOfWeekTemplate[]>(templates);
+  const dirtyBaseRef = useRef<DirtyBase>({});
+  /** Czy niezapisane edycje z sessionStorage zostały już rozpatrzone dla bieżącego sklepu/miesiąca. */
+  const restoredRef = useRef(false);
+  const viewKey = `${storeId}_${year}_${month}`;
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
+
   // Drafty wyłącznie bieżącego sklepu. Przy przełączaniu sklepu rodzic na chwilę
   // nadal może przekazać drafty poprzedniego sklepu (czyści je dopiero w swoim efekcie).
   const storeDrafts = useMemo(
@@ -147,69 +181,101 @@ export function TemplateManager({
     [drafts, storeId]
   );
 
-  // Szablony zbudowane z bazy (uśrednione per dzień tygodnia) + ich podpis.
+  // Szablony zbudowane z bazy (uśrednione per dzień tygodnia) + podpisy poszczególnych dni.
   const dbTemplates = useMemo(() => buildTemplatesFromDrafts(storeDrafts), [storeDrafts]);
-  const dbSignature = useMemo(() => computeSignature(dbTemplates), [dbTemplates]);
-  const dbSignatureRef = useRef(dbSignature);
-  dbSignatureRef.current = dbSignature;
+  const dbDaySignatures = useMemo(() => {
+    const result: Record<number, string> = {};
+    for (const t of dbTemplates) result[t.dayOfWeek] = daySignature(t.hourlyDemand);
+    return result;
+  }, [dbTemplates]);
+  const dbDaySignaturesRef = useRef(dbDaySignatures);
+  dbDaySignaturesRef.current = dbDaySignatures;
 
-  // true, gdy użytkownik ma w tym komponencie niezapisane edycje szablonów.
-  // Dopóki true, odświeżenie draftów z rodzica NIE nadpisuje jego pracy.
-  const dirtyRef = useRef(false);
-
-  /** Jedyne miejsce zapisujące edycję: stan + kopia robocza w sessionStorage + flagi. */
-  const applyEdit = useCallback((updater: (prev: DayOfWeekTemplate[]) => DayOfWeekTemplate[]) => {
-    dirtyRef.current = true;
-    setTemplates(prev => {
-      const updated = updater(prev);
-      saveTemplatesToStorage(storeId, year, month, updated, dbSignatureRef.current);
-      return updated;
-    });
-    setHasChanges(true);
+  /** Jedyne miejsce zmieniające stan szablonów: stan + refy + kopia robocza w sessionStorage. */
+  const commit = useCallback((nextTemplates: DayOfWeekTemplate[], nextDirty: DirtyBase) => {
+    templatesRef.current = nextTemplates;
+    dirtyBaseRef.current = nextDirty;
+    setTemplates(nextTemplates);
+    setDirtyBase(nextDirty);
+    persistDirtyDays(storeId, year, month, nextTemplates, nextDirty);
   }, [storeId, year, month]);
 
-  // Zmiana sklepu / miesiąca → zaczynamy od zera (porzucamy flagę edycji poprzedniego widoku).
+  /** Edycja JEDNEGO dnia tygodnia — oznacza tylko ten dzień jako niezapisany. */
+  const applyEdit = useCallback((dayOfWeek: number, updater: (prev: number[]) => number[]) => {
+    const current = templatesRef.current;
+    const target = current.find(t => t.dayOfWeek === dayOfWeek);
+    if (!target) return;
+
+    const nextDemand = updater(target.hourlyDemand);
+    if (daySignature(nextDemand) === daySignature(target.hourlyDemand)) return; // bez realnej zmiany
+
+    const nextTemplates = current.map(t => t.dayOfWeek === dayOfWeek ? { ...t, hourlyDemand: nextDemand } : t);
+    const nextDirty: DirtyBase = dirtyBaseRef.current[dayOfWeek] !== undefined
+      ? dirtyBaseRef.current
+      : { ...dirtyBaseRef.current, [dayOfWeek]: dbDaySignaturesRef.current[dayOfWeek] ?? daySignature(Array(24).fill(0)) };
+
+    commit(nextTemplates, nextDirty);
+  }, [commit]);
+
+  // Zmiana sklepu / miesiąca → zaczynamy od zera.
   // Musi być zadeklarowany PRZED efektem poniżej — efekty odpalają się w kolejności deklaracji.
   useEffect(() => {
-    dirtyRef.current = false;
-    setHasChanges(false);
+    restoredRef.current = false;
+    templatesRef.current = emptyTemplates();
+    dirtyBaseRef.current = {};
+    setDirtyBase({});
     setLoadingTemplates(!!storeId);
   }, [storeId, year, month]);
 
   /**
    * Synchronizacja szablonów z bazą. Źródłem prawdy są drafty z bazy:
-   * 1. Użytkownik ma niezapisane edycje w tym komponencie (dirtyRef) → nic nie ruszamy.
-   * 2. Jest kopia robocza w sessionStorage:
-   *    - powstała ze stanu bazy identycznego z obecnym (podpis się zgadza) → przywracamy
-   *      niezapisane edycje (np. po powrocie z trybu "Edycja Konkretnych Dni"),
-   *    - baza zmieniła się od tamtej pory (np. admin zapisał szablony) → kopia jest
-   *      nieaktualna, kasujemy ją i pokazujemy dane z bazy.
-   *    - drafty jeszcze się ładują (pusta lista) → nie ma z czym porównać, kopię
-   *      zostawiamy i oceniamy ją, gdy drafty dotrą.
-   * 3. Brak kopii → szablony z bazy (zera, gdy dla dnia tygodnia nie ma draftów).
-   * Efekt odpala się też przy zmianie `drafts` (np. po zapisie albo po załadowaniu).
+   * - dni tygodnia BEZ niezapisanych zmian zawsze pokazują dane z bazy (odświeżają się
+   *   po każdym przeładowaniu draftów, np. po zapisie albo po załadowaniu),
+   * - dni Z niezapisanymi zmianami zachowują edycje użytkownika,
+   * - raz na sklep/miesiąc przywracamy niezapisane edycje z sessionStorage, ale tylko
+   *   dla dni, w których baza nie zmieniła się od czasu edycji (zgodny podpis).
+   *   Nieaktualne kopie są odrzucane.
    */
   useEffect(() => {
     if (!storeId) { setLoadingTemplates(false); return; }
-    if (dirtyRef.current) { setLoadingTemplates(false); return; }
 
-    const stored = loadTemplatesFromStorage(storeId, year, month);
-    if (stored) {
-      const draftsStillLoading = storeDrafts.length === 0;
-      if (draftsStillLoading || stored.baseSignature === dbSignature) {
-        dirtyRef.current = true;
-        setTemplates(stored.templates);
-        setHasChanges(true);
-        setLoadingTemplates(false);
-        return;
+    const nextDirty: DirtyBase = { ...dirtyBaseRef.current };
+    const overlay: Record<number, number[]> = {};
+
+    if (!restoredRef.current) {
+      const stored = loadStoredDays(storeId, year, month);
+      if (stored) {
+        for (const [key, value] of Object.entries(stored)) {
+          const dow = Number(key);
+          if (nextDirty[dow] !== undefined) continue; // użytkownik już edytuje ten dzień
+          if (value.baseSignature === dbDaySignatures[dow]) {
+            nextDirty[dow] = value.baseSignature;
+            overlay[dow] = value.hourlyDemand;
+          }
+        }
       }
-      clearTemplatesFromStorage(storeId, year, month);
+      // Dopóki drafty się ładują (pusta lista), nie ma z czym porównać — próbujemy ponownie
+      // przy kolejnym przebiegu. Gdy drafty dotarły, decyzja jest ostateczna.
+      if (storeDrafts.length > 0) restoredRef.current = true;
     }
 
-    setTemplates(dbTemplates);
-    setHasChanges(false);
+    const current = templatesRef.current;
+    const merged = dbTemplates.map(t => {
+      if (overlay[t.dayOfWeek]) return { ...t, hourlyDemand: overlay[t.dayOfWeek] };
+      if (nextDirty[t.dayOfWeek] !== undefined) {
+        const local = current.find(c => c.dayOfWeek === t.dayOfWeek);
+        if (local) return local;
+      }
+      return t;
+    });
+
+    templatesRef.current = merged;
+    dirtyBaseRef.current = nextDirty;
+    setTemplates(merged);
+    setDirtyBase(nextDirty);
+    if (restoredRef.current) persistDirtyDays(storeId, year, month, merged, nextDirty); // sprząta nieaktualne kopie
     setLoadingTemplates(false);
-  }, [storeId, year, month, storeDrafts, dbTemplates, dbSignature]);
+  }, [storeId, year, month, storeDrafts, dbTemplates, dbDaySignatures]);
 
   const maxCap = Math.max(maxValue, 1);
   const currentTemplate = templates.find(t => t.dayOfWeek === selectedTemplate);
@@ -218,15 +284,19 @@ export function TemplateManager({
     ? Array.from({ length: 24 }, (_, i) => i)
     : Array.from({ length: 17 }, (_, i) => i + 6);
 
+  const selectedDirty = dirtyBase[selectedTemplate] !== undefined;
+  const dirtyDayNames = templates.filter(t => dirtyBase[t.dayOfWeek] !== undefined).map(t => t.dayName);
+  const otherDirtyDayNames = templates
+    .filter(t => t.dayOfWeek !== selectedTemplate && dirtyBase[t.dayOfWeek] !== undefined)
+    .map(t => t.dayName);
+  const anyDirty = dirtyDayNames.length > 0;
+
   const [dragging, setDragging] = useState<number | null>(null);
   const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const setHourValue = useCallback((hour: number, newVal: number) => {
-    applyEdit(prev => prev.map(t =>
-      t.dayOfWeek === selectedTemplate
-        ? { ...t, hourlyDemand: t.hourlyDemand.map((v, i) => i === hour ? Math.max(0, Math.min(maxCap, Math.round(newVal))) : v) }
-        : t
-    ));
+    const clamped = Math.max(0, Math.min(maxCap, Math.round(newVal)));
+    applyEdit(selectedTemplate, prev => prev.map((v, i) => i === hour ? clamped : v));
   }, [selectedTemplate, maxCap, applyEdit]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
@@ -242,31 +312,19 @@ export function TemplateManager({
     onDayOfWeekChange?.(dayOfWeek);
   };
 
-  // Zapis szablonów
-  const handleSaveTemplates = async () => {
-    // W ostatnim miesiącu okresu rozliczeniowego totalEmployeeNorm to suma godzin
-    // potwierdzonych w zakładce "Pozostałe godziny pracowników" (nie norma etatu) -
-    // blokujemy zapis, jeśli zastosowanie szablonów przekroczyłoby ten budżet.
-    // Uwaga: to policzenie z górką - realny zapis może wyjść niżej, bo backend zeruje
-    // zapotrzebowanie w dni świąteczne (holidayManager.isHoliday), a to liczy je tak jak są
-    // w szablonie. Lepiej ostrzec z zapasem niż przepuścić przekroczenie.
-    if (isLastMonthOfPeriod) {
-      let projectedTotal = 0;
-      const daysInMonth = new Date(year, month + 1, 0).getDate();
-      for (let day = 1; day <= daysInMonth; day++) {
-        const dow = new Date(year, month, day).getDay();
-        const t = templates.find(t => t.dayOfWeek === dow);
-        if (t) projectedTotal += t.hourlyDemand.reduce((a, b) => a + b, 0);
-      }
+  /**
+   * Zapis szablonu JEDNEGO, aktualnie wybranego dnia tygodnia: nadpisuje wszystkie takie dni
+   * w miesiącu (np. wszystkie środy), także te edytowane wcześniej indywidualnie.
+   * Pozostałe dni tygodnia nie są ruszane — ani w bazie, ani w ich niezapisanych edycjach.
+   */
+  const handleSaveSelectedDay = async () => {
+    const dayOfWeek = selectedTemplate;
+    const template = templatesRef.current.find(t => t.dayOfWeek === dayOfWeek);
+    if (!template) return;
 
-      if (projectedTotal > totalEmployeeNorm) {
-        const over = Math.round((projectedTotal - totalEmployeeNorm) * 10) / 10;
-        toast.error(
-          `Nie można zapisać - zapotrzebowanie z szablonów w tym miesiącu (${projectedTotal}h) przekroczyłoby dostępny budżet godzin pracowników (${totalEmployeeNorm}h) o ${over}h. Zmniejsz zapotrzebowanie albo zwiększ godziny w zakładce "Pozostałe godziny pracowników".`
-        );
-        return;
-      }
-    }
+    const savedViewKey = viewKeyRef.current;
+    const totalDemand = template.hourlyDemand.reduce((a, b) => a + b, 0);
+    const dates = getDatesForDayOfWeek(year, month, dayOfWeek);
 
     try {
       setSaving(true);
@@ -275,59 +333,90 @@ export function TemplateManager({
         formatDateForBackend(new Date(year, month, 1)),
         formatDateForBackend(new Date(year, month + 1, 0))
       );
-      const existingMap = new Map(existing.content.map(d => [d.draftDate, d]));
-      let saved = 0, errors = 0;
+      const existingMap = new Map(existing.content.map(d => [normalizeDate(d.draftDate), d]));
 
-      for (const template of templates) {
-        const totalDemand = template.hourlyDemand.reduce((a, b) => a + b, 0);
-        const dates = getDatesForDayOfWeek(year, month, template.dayOfWeek);
-        for (const date of dates) {
-          const dateStr = formatDateForBackend(date);
-          const existingDraft = existingMap.get(dateStr);
-          try {
-            if (existingDraft) {
-              await draftService.update(storeId, existingDraft.id, { draftDate: dateStr, hourlyDemand: template.hourlyDemand });
-              saved++;
-            } else if (totalDemand > 0) {
-              await draftService.create(storeId, { draftDate: dateStr, hourlyDemand: template.hourlyDemand });
-              saved++;
-            }
-          } catch { errors++; }
+      // W ostatnim miesiącu okresu rozliczeniowego totalEmployeeNorm to suma godzin
+      // potwierdzonych w zakładce "Pozostałe godziny pracowników" (nie norma etatu) -
+      // blokujemy zapis, jeśli po zapisie tego dnia tygodnia suma przekroczyłaby ten budżet.
+      // Pozostałe dni liczymy takimi, jakie są teraz w bazie (nie ruszamy ich).
+      // Uwaga: to policzenie z górką - backend zeruje zapotrzebowanie w dni świąteczne
+      // (holidayManager.isHoliday), a tu liczymy je tak jak w szablonie. Lepiej ostrzec z zapasem.
+      if (isLastMonthOfPeriod) {
+        let projectedTotal = 0;
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        for (let day = 1; day <= daysInMonth; day++) {
+          const date = new Date(year, month, day);
+          if (date.getDay() === dayOfWeek) {
+            projectedTotal += totalDemand;
+          } else {
+            const draft = existingMap.get(formatDateForBackend(date));
+            if (draft) projectedTotal += sumDemand(draft.hourlyDemand);
+          }
+        }
+
+        if (projectedTotal > totalEmployeeNorm) {
+          const over = Math.round((projectedTotal - totalEmployeeNorm) * 10) / 10;
+          toast.error(
+            `Nie można zapisać - zapotrzebowanie w tym miesiącu po zapisie dnia "${template.dayName}" (${projectedTotal}h) przekroczyłoby dostępny budżet godzin pracowników (${totalEmployeeNorm}h) o ${over}h. Zmniejsz zapotrzebowanie albo zwiększ godziny w zakładce "Pozostałe godziny pracowników".`
+          );
+          return;
         }
       }
 
-      if (errors > 0) toast.warning(`Zapisano ${saved} draftów, ${errors} błędów`);
-      else toast.success(`Zapisano ${saved} draftów`);
+      let saved = 0, errors = 0;
+      for (const date of dates) {
+        const dateStr = formatDateForBackend(date);
+        const existingDraft = existingMap.get(dateStr);
+        try {
+          if (existingDraft) {
+            await draftService.update(storeId, existingDraft.id, { draftDate: dateStr, hourlyDemand: template.hourlyDemand });
+            saved++;
+          } else if (totalDemand > 0) {
+            await draftService.create(storeId, { draftDate: dateStr, hourlyDemand: template.hourlyDemand });
+            saved++;
+          }
+        } catch { errors++; }
+      }
 
-      // Zapis do bazy zakończony — kopia robocza przestaje być potrzebna, a od tej chwili
-      // źródłem prawdy znów są drafty (rodzica przeładuje je w onTemplatesSaved).
-      clearTemplatesFromStorage(storeId, year, month);
-      dirtyRef.current = false;
-      setHasChanges(false);
-      onTemplatesSaved(); // rodzic przeładuje drafts[] → confirmedDraftHours się zaktualizuje
+      if (errors > 0) toast.warning(`${template.dayName}: zapisano ${saved} draftów, ${errors} błędów`);
+      else toast.success(`${template.dayName}: zapisano ${saved} draftów`);
+
+      // Użytkownik mógł w trakcie zapisu przełączyć sklep/miesiąc — wtedy nie ruszamy stanu nowego widoku.
+      // Przy błędach dzień zostaje oznaczony jako niezapisany, żeby można było ponowić zapis.
+      if (errors === 0 && viewKeyRef.current === savedViewKey) {
+        const nextDirty = { ...dirtyBaseRef.current };
+        delete nextDirty[dayOfWeek];
+        commit(templatesRef.current, nextDirty); // czyści też kopię roboczą tego dnia
+      }
+      onTemplatesSaved(); // rodzic przeładuje drafts[] → confirmedDraftHours i szablon tego dnia z bazy
     } catch (err) {
-      toast.error('Błąd zapisu szablonów');
+      toast.error('Błąd zapisu szablonu');
     } finally {
       setSaving(false);
     }
   };
 
   /**
-   * Live suma godzin z aktualnego stanu szablonów (UI, jeszcze niezapisanych).
-   * Przekazywana do PeriodEstimation tylko gdy hasChanges === true,
-   * żeby pokazać deltę "co zmieni się po zapisie".
-   * Gdy false → null, widget nie pokazuje delty (szablony == baza).
+   * Live suma godzin miesiąca po zapisie: dni tygodnia z niezapisanymi zmianami liczymy
+   * wg szablonu, pozostałe — wg tego, co jest teraz w bazie. Przekazywana do PeriodEstimation
+   * tylko gdy są niezapisane zmiany, żeby pokazać deltę "co zmieni się po zapisie".
    */
-  const totalDraftHoursFromTemplates = (() => {
-    let total = 0;
+  const liveDraftHours = useMemo(() => {
+    const dbByDate = new Map(storeDrafts.map(d => [normalizeDate(d.draftDate), sumDemand(d.hourlyDemand)]));
     const daysInMonth = new Date(year, month + 1, 0).getDate();
+    let total = 0;
     for (let day = 1; day <= daysInMonth; day++) {
-      const dow = new Date(year, month, day).getDay();
-      const t = templates.find(t => t.dayOfWeek === dow);
-      if (t) total += t.hourlyDemand.reduce((a, b) => a + b, 0);
+      const date = new Date(year, month, day);
+      const dow = date.getDay();
+      if (dirtyBase[dow] !== undefined) {
+        const t = templates.find(x => x.dayOfWeek === dow);
+        if (t) total += t.hourlyDemand.reduce((a, b) => a + b, 0);
+      } else {
+        total += dbByDate.get(formatDateForBackend(date)) ?? 0;
+      }
     }
     return total;
-  })();
+  }, [storeDrafts, templates, dirtyBase, year, month]);
 
   if (loadingTemplates) {
     return (
@@ -347,7 +436,7 @@ export function TemplateManager({
         <div>
           <h3 className="text-xl font-black text-white tracking-tight flex items-center gap-3">
             {MONTH_NAMES[month]} {year}
-            {hasChanges && <AlertCircle className="w-5 h-5 text-amber-500 animate-pulse" />}
+            {anyDirty && <AlertCircle className="w-5 h-5 text-amber-500 animate-pulse" />}
           </h3>
           {/* Legenda kresek – wyświetlana gdy godziny sklepu są dostępne */}
           {(openHour !== undefined || closeHour !== undefined) && (
@@ -366,6 +455,12 @@ export function TemplateManager({
               )}
             </div>
           )}
+          {/* Informacja o niezapisanych zmianach w INNYCH dniach tygodnia — "Zapisz" zapisuje tylko aktywny dzień */}
+          {otherDirtyDayNames.length > 0 && (
+            <p className="text-[10px] font-bold text-amber-400 mt-1">
+              Niezapisane zmiany także w: {otherDirtyDayNames.join(', ')} — każdy dzień zapisujesz osobno
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => setShowNightHours(v => !v)}
@@ -374,11 +469,12 @@ export function TemplateManager({
             {showNightHours ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
             {showNightHours ? "Ukryj godziny nocne" : "Pokaż godziny nocne"}
           </button>
-          <button onClick={handleSaveTemplates} disabled={saving || !hasChanges}
+          <button onClick={handleSaveSelectedDay} disabled={saving || !selectedDirty}
+            title={`Zapisuje szablon dnia: ${currentTemplate.dayName} (wszystkie takie dni w miesiącu)`}
             className={cn("px-6 py-2.5 rounded-xl font-black transition-all flex items-center gap-2 text-sm uppercase",
-              hasChanges ? "bg-emerald-500 text-slate-900 shadow-lg shadow-emerald-500/20" : "bg-slate-800 text-slate-500 cursor-not-allowed")}>
+              selectedDirty ? "bg-emerald-500 text-slate-900 shadow-lg shadow-emerald-500/20" : "bg-slate-800 text-slate-500 cursor-not-allowed")}>
             {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Zapisz
+            Zapisz: {currentTemplate.dayName}
           </button>
         </div>
       </div>
@@ -394,7 +490,7 @@ export function TemplateManager({
       <div className="px-5 py-3 border-b border-slate-800">
         <PeriodEstimation
           confirmedDraftHours={confirmedDraftHours}
-          liveTemplateDraftHours={hasChanges ? totalDraftHoursFromTemplates : null}
+          liveTemplateDraftHours={anyDirty ? liveDraftHours : null}
           activeNonWarehouseCount={activeNonWarehouseCount}
           totalEmployeeNorm={totalEmployeeNorm}
           totalVacationDays={totalVacationDays}
@@ -404,13 +500,18 @@ export function TemplateManager({
 
       {/* Tabs */}
       <div className="bg-slate-950/50 p-2 flex gap-1 overflow-x-auto border-b border-slate-800">
-        {templates.map(t => (
-          <button key={t.dayOfWeek} onClick={() => handleSelectTemplate(t.dayOfWeek)}
-            className={cn("px-4 py-2 rounded-lg text-[10px] font-black transition-all whitespace-nowrap border-2",
-              selectedTemplate === t.dayOfWeek ? "bg-blue-600 border-blue-400 text-white" : "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300")}>
-            {t.dayName.toUpperCase()}
-          </button>
-        ))}
+        {templates.map(t => {
+          const isDirty = dirtyBase[t.dayOfWeek] !== undefined;
+          return (
+            <button key={t.dayOfWeek} onClick={() => handleSelectTemplate(t.dayOfWeek)}
+              title={isDirty ? 'Niezapisane zmiany w tym dniu' : undefined}
+              className={cn("px-4 py-2 rounded-lg text-[10px] font-black transition-all whitespace-nowrap border-2",
+                selectedTemplate === t.dayOfWeek ? "bg-blue-600 border-blue-400 text-white" : "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300")}>
+              {t.dayName.toUpperCase()}
+              {isDirty && <span className="ml-1.5 text-amber-400">●</span>}
+            </button>
+          );
+        })}
       </div>
 
       {/* Kopiuj z dnia — umieszczone NAD wykresem, żeby było widoczne bez przewijania */}
@@ -422,9 +523,9 @@ export function TemplateManager({
             onChange={e => {
               const sourceValue = e.target.value;
               setCopySourceDay(sourceValue);
-              const source = templates.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
+              const source = templatesRef.current.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
               if (source) {
-                applyEdit(prev => prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: [...source.hourlyDemand] } : t));
+                applyEdit(selectedTemplate, () => [...source.hourlyDemand]);
                 toast.success('Skopiowano!');
                 setCopySourceDay('');
               }
@@ -545,9 +646,7 @@ export function TemplateManager({
       {/* Footer */}
       <div className="p-5 bg-slate-900 border-t border-slate-700">
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => {
-            applyEdit(prev => prev.map(t => t.dayOfWeek === selectedTemplate ? { ...t, hourlyDemand: Array(24).fill(0) } : t));
-          }}
+          <button onClick={() => applyEdit(selectedTemplate, () => Array(24).fill(0))}
             className="px-4 py-2 bg-slate-900 text-red-500 border border-red-900/50 text-xs rounded-xl font-black hover:bg-red-600 hover:text-white">
             WYCZYŚĆ
           </button>

@@ -78,35 +78,47 @@ export function getLatestDraftRecord<
  * godzinowe zapotrzebowanie po wszystkich dniach danego dnia tygodnia
  * (analogicznie do trybu "Edycja Konkretnych Dni" w YourDraft.getCurrentDraft).
  *
- * Używane jako fallback, gdy w sessionStorage nie ma jeszcze roboczej wersji
- * szablonów (np. pierwsze wejście w tej sesji przeglądarki, albo po powrocie
- * do zakładki w nowej sesji) — bez tego "Szablony" pokazywały same zera mimo
- * że drafty są poprawnie zapisane w bazie.
+ * Dni z samymi zerami (święta zerowane przez backend, puste/wyczyszczone dni) NIE
+ * wchodzą do średniej — w przeciwnym razie np. jedno święto w środę obniżałoby
+ * szablon środy o ćwierć, a zapis takiego szablonu zniekształciłby pozostałe środy.
+ * Gdy dla danego dnia tygodnia wszystkie dni są zerowe lub brak draftów → same zera.
+ *
+ * Używane jako źródło szablonów w TemplateManager (źródłem prawdy są drafty z bazy).
  */
 export function buildTemplatesFromDrafts(
   drafts: ResponseDemandDraftDTO[]
 ): DayOfWeekTemplate[] {
   return DEFAULT_DAY_TEMPLATES.map((template) => {
-    const matching = drafts.filter((d) => {
-      const cleanDateStr = d.draftDate.split('T')[0];
-      return parseDateFromBackend(cleanDateStr).getDay() === template.dayOfWeek;
-    });
+    const demandArrays: number[][] = [];
 
-    if (matching.length === 0) {
+    for (const d of drafts) {
+      const cleanDateStr = d.draftDate.split('T')[0];
+      if (parseDateFromBackend(cleanDateStr).getDay() !== template.dayOfWeek) continue;
+
+      let demandArray: number[];
+      try {
+        demandArray = typeof d.hourlyDemand === 'string' ? JSON.parse(d.hourlyDemand) : d.hourlyDemand;
+      } catch {
+        continue; // uszkodzony rekord — pomijamy zamiast wywracać cały widok
+      }
+      if (!Array.isArray(demandArray)) continue;
+      if (demandArray.every((v) => v === 0)) continue; // dzień zerowy (święto / pusty) — poza średnią
+
+      demandArrays.push(demandArray);
+    }
+
+    if (demandArrays.length === 0) {
       return { ...template, hourlyDemand: Array(24).fill(0) };
     }
 
-    const avgDemand = Array(24).fill(0);
-    matching.forEach((d) => {
-      const demandArray = typeof d.hourlyDemand === 'string'
-        ? JSON.parse(d.hourlyDemand)
-        : d.hourlyDemand;
-      demandArray.forEach((val: number, hour: number) => { avgDemand[hour] += val; });
+    const sum = Array(24).fill(0);
+    demandArrays.forEach((arr) => {
+      arr.forEach((val: number, hour: number) => { if (hour < 24) sum[hour] += val; });
     });
 
     return {
       ...template,
-      hourlyDemand: avgDemand.map((val) => Math.round(val / matching.length)),
+      hourlyDemand: sum.map((val) => Math.round(val / demandArrays.length)),
     };
   });
 }
