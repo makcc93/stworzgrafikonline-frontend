@@ -13,12 +13,13 @@
  * - TemplateManager i PeriodEstimation w trybie 2 korzystają z tych samych danych
  */
 
-import { useState, useEffect, useMemo, type ComponentType, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type ComponentType } from 'react';
 import {
-  Loader,
   CalendarDays,
-  LayoutTemplate,
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
+  LayoutTemplate,
   Users2,
   AlertTriangle,
   History,
@@ -28,10 +29,13 @@ import { toast } from 'sonner';
 import type { ResponseDemandDraftDTO } from '@/types/draft.types';
 import {
   formatDateForBackend,
-  parseDateFromBackend,
-  createEmptyDraft,
-  createSampleDraft,
+  buildMonthDayInfos,
+  buildTemplatesFromDrafts,
   getLatestDraftRecord,
+  MONTHS_GENITIVE,
+  normalizeDraftDate,
+  sumDemand,
+  toDemandArray,
 } from '@/utils/draft.utils';
 import { draftService, storeDetailsService, billingPeriodConfigService, storeOpeningHoursService } from '@/services/api-provider';
 import type { DayHours } from '@/services/api/store-opening-hours.service';
@@ -39,14 +43,11 @@ import type { MonthlyNormData } from '@/services/api/draft.service';
 import type { BillingPeriodConfigResponse } from '@/types/billing-period-config.types';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
 import { employeeService, vacationService, delegationService } from '@/services/api-provider';
-import { TemplateManager } from '@/components/draft/TemplateManager';
+import { TemplateManager, type StoreHoursByDay } from '@/components/draft/TemplateManager';
 import { PeriodEstimation } from '@/components/draft/PeriodEstimation';
-import { DraftHeader } from './draft/DraftHeader';
-import { MonthlyPeopleChart } from './draft/MonthlyPeopleChart';
-import { SelectionInfo } from './draft/SelectionInfo';
 import { DraftChart } from './draft/DraftChart';
-import { DraftStats } from './draft/DraftStats';
 import { MiniCalendar } from './draft/MiniCalendar';
+import { TemplateDiffList } from './draft/TemplateDiffList';
 import { useAppContext } from '@/context/AppContext';
 import { useRequestGuard } from '@/hooks/useRequestGuard';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
@@ -160,17 +161,6 @@ function ModeTabs({
   );
 }
 
-/** Nagłówek sekcji — spójna etykieta "eyebrow" dla grup treści w trybie edycji. */
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-      <span className="h-px flex-1 max-w-4 bg-slate-700" />
-      {children}
-      <span className="h-px flex-1 bg-slate-700" />
-    </h3>
-  );
-}
-
 /** Elegancki skeleton zamiast gołego spinnera — mniej "migotania", bardziej dopracowane wrażenie ładowania. */
 function DraftLoadingSkeleton() {
   return (
@@ -187,6 +177,30 @@ function DraftLoadingSkeleton() {
 
 /** Wspólny styl "szklanego" panelu używany w całym module draftu. */
 const GLASS_PANEL = 'bg-slate-800/40 backdrop-blur-xl border border-slate-700/60 rounded-2xl';
+
+// Mapowanie: getDay() (0=niedziela…6=sobota) → klucz godzin sklepu
+const DAY_INDEX_TO_KEY = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+
+/** Dni tygodnia w dopełniaczu ("szablon środy"), klucz = getDay(). */
+const WEEKDAY_GENITIVE: Record<number, string> = {
+  0: 'niedzieli',
+  1: 'poniedziałku',
+  2: 'wtorku',
+  3: 'środy',
+  4: 'czwartku',
+  5: 'piątku',
+  6: 'soboty',
+};
+
+const DISCARD_CONFIRM_MESSAGE = 'Masz niezapisane zmiany w edytowanym dniu. Odrzucić je i kontynuować?';
+
+function parseOpenCloseHours(hours: DayHours | undefined): { openHour: number; closeHour: number } | null {
+  if (!hours) return null;
+  const openHour = parseInt(hours.open.split(':')[0], 10);
+  const closeHour = parseInt(hours.close.split(':')[0], 10);
+  if (Number.isNaN(openHour) || Number.isNaN(closeHour)) return null;
+  return { openHour, closeHour };
+}
 
 export default function YourDraft() {
   // ─── Pobierz aktualnie wybrany sklep z kontekstu ───────────
@@ -242,10 +256,14 @@ export default function YourDraft() {
   const [month, setMonth] = useState(getInitialMonth());
   const [selectedDate, setSelectedDate] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<'templates' | 'edit' | 'hoursConfirmation'>('templates');
+  /** Czy edytor konkretnego dnia ma niezapisane zmiany (raportuje DraftChart). */
+  const [editDirty, setEditDirty] = useState(false);
+  /** Zwiększany przez "Ponów próbę" — wymusza ponowne pobranie draftów. */
+  const [reloadKey, setReloadKey] = useState(0);
 
   /**
-   * Aktualnie wybrany dzień tygodnia w zakładce Szablony.
-   * Synchronizowany z TemplateManager via callback onDayOfWeekChange.
+   * Aktualnie wybrany dzień tygodnia w zakładce Szablony (konwencja getDay(): 0=niedziela).
+   * Trzymany tutaj, żeby przeżył przełączenie trybu (TemplateManager się wtedy odmontowuje).
    * Domyślnie 1 (poniedziałek) – zgodne z DEFAULT_DAY_TEMPLATES.
    */
   const [selectedTemplateDay, setSelectedTemplateDay] = useState<number>(1);
@@ -258,17 +276,22 @@ export default function YourDraft() {
 
   // ======================== DERIVED STATE ========================
 
+  // Drafty wyłącznie bieżącego sklepu — przy przełączaniu sklepu stan `drafts` na chwilę
+  // może jeszcze zawierać drafty poprzedniego (czyści go dopiero efekt ładowania).
+  const storeDrafts = useMemo(
+    () => drafts.filter((d) => d.storeId === currentStoreId),
+    [drafts, currentStoreId]
+  );
+
   /**
    * Rzeczywista suma godzin z bazy danych.
    * Wyliczana z drafts[] — automatycznie aktualizuje się po każdym zapisie w obu trybach.
+   * Dzień samych zer (święto) nie wnosi nic do sumy.
    */
-  const confirmedDraftHours = useMemo(() =>
-    drafts.reduce((total, draft) => {
-      const isHoliday = draft.hourlyDemand.every(v => v === 0);
-      if (isHoliday) return total;
-      return total + draft.hourlyDemand.reduce((s, v) => s + v, 0);
-    }, 0),
-  [drafts]);
+  const confirmedDraftHours = useMemo(
+    () => storeDrafts.reduce((total, draft) => total + sumDemand(draft.hourlyDemand), 0),
+    [storeDrafts]
+  );
 
   const activeNonWarehouseCount = useMemo(
     () => employees.filter((e: any) => e.enable && !e.warehouseman).length,
@@ -278,19 +301,18 @@ export default function YourDraft() {
   /**
    * Liczy jaka byłaby suma miesięczna draftu, gdyby dzień `dateStr` miał `newHourlyDemand`
    * zamiast obecnej wartości (albo doszedł jako nowy dzień). Ta sama logika co
-   * confirmedDraftHours (dzień samych zer = święto, pomijany).
+   * confirmedDraftHours (dzień samych zer = święto, nie wnosi nic do sumy).
    */
   const computeProjectedMonthlyTotal = (dateStr: string, newHourlyDemand: number[]): number => {
-    const dayExists = drafts.some((d) => d.draftDate === dateStr);
-    const dailyDemands = dayExists
-      ? drafts.map((d) => (d.draftDate === dateStr ? newHourlyDemand : d.hourlyDemand))
-      : [...drafts.map((d) => d.hourlyDemand), newHourlyDemand];
-
-    return dailyDemands.reduce((total, hourlyDemand) => {
-      const isHoliday = hourlyDemand.every((v) => v === 0);
-      if (isHoliday) return total;
-      return total + hourlyDemand.reduce((s, v) => s + v, 0);
-    }, 0);
+    let total = 0;
+    let found = false;
+    for (const d of storeDrafts) {
+      const isSameDay = normalizeDraftDate(d.draftDate) === dateStr;
+      if (isSameDay) found = true;
+      total += sumDemand(isSameDay ? newHourlyDemand : d.hourlyDemand);
+    }
+    if (!found) total += sumDemand(newHourlyDemand);
+    return total;
   };
 
   /**
@@ -321,45 +343,37 @@ export default function YourDraft() {
     [employees]
   );
 
-  // Mapowanie: getDay() (0=niedziela…6=sobota) → klucz godzin sklepu
-  const DAY_INDEX_TO_KEY = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'] as const;
-
   /**
-   * Godziny otwarcia/zamknięcia dla aktualnie wybranego dnia.
-   * Jeśli wybrany konkretny dzień → bierzemy jego dzień tygodnia,
-   * jeśli tryb szablonu → bierzemy selectedTemplateDay (0–6, konwencja getDay()).
+   * Godziny otwarcia sklepu per dzień tygodnia (klucz = getDay()). undefined = jeszcze niezaładowane.
+   * Dzień bez godzin albo z otwarciem >= zamknięcia traktujemy jako zamknięty (null).
    */
-  const storeHoursForSelectedDay = useMemo(() => {
-    if (!storeOpeningHours) return null;
-    let dayOfWeek: number;
-    if (selectedDate !== null) {
-      dayOfWeek = new Date(year, month, selectedDate).getDay();
-    } else {
-      dayOfWeek = selectedTemplateDay; // ta sama konwencja co getDay(): 0=niedziela
+  const storeHoursByDay = useMemo<StoreHoursByDay | undefined>(() => {
+    if (!storeOpeningHours) return undefined;
+    const result: StoreHoursByDay = {};
+    for (let dow = 0; dow < 7; dow++) {
+      const parsed = parseOpenCloseHours(storeOpeningHours[DAY_INDEX_TO_KEY[dow]]);
+      result[dow] = parsed && parsed.openHour < parsed.closeHour ? parsed : null;
     }
-    const key = DAY_INDEX_TO_KEY[dayOfWeek];
-    const hours = storeOpeningHours[key];
-    if (!hours) return null;
-    return {
-      openHour: parseInt(hours.open.split(':')[0], 10),
-      closeHour: parseInt(hours.close.split(':')[0], 10),
-    };
-  }, [storeOpeningHours, selectedDate, selectedTemplateDay, year, month]);
+    return result;
+  }, [storeOpeningHours]);
 
-  /**
-   * Godziny otwarcia/zamknięcia dla aktualnie wybranego dnia tygodnia w szablonach.
-   * selectedTemplateDay używa tej samej konwencji co getDay(): 0=niedziela, 1=pon, …, 6=sobota.
-   */
-  const storeHoursForTemplateDay = useMemo(() => {
-    if (!storeOpeningHours) return null;
-    const key = DAY_INDEX_TO_KEY[selectedTemplateDay];
-    const hours = storeOpeningHours[key];
-    if (!hours) return null;
-    return {
-      openHour: parseInt(hours.open.split(':')[0], 10),
-      closeHour: parseInt(hours.close.split(':')[0], 10),
-    };
-  }, [storeOpeningHours, selectedTemplateDay]);
+  const closedWeekdays = useMemo(() => {
+    if (!storeHoursByDay) return undefined;
+    const closed = new Set<number>();
+    for (let dow = 0; dow < 7; dow++) if (!storeHoursByDay[dow]) closed.add(dow);
+    return closed;
+  }, [storeHoursByDay]);
+
+  // Szablony dni tygodnia z bazy (średnia z miesiąca) — punkt odniesienia dla trybu edycji dni.
+  const templatesFromDb = useMemo(() => buildTemplatesFromDrafts(storeDrafts), [storeDrafts]);
+  const monthDays = useMemo(
+    () => buildMonthDayInfos(year, month, storeDrafts, templatesFromDb),
+    [year, month, storeDrafts, templatesFromDb]
+  );
+  const peakStaff = useMemo(
+    () => storeDrafts.reduce((max, d) => Math.max(max, ...toDemandArray(d.hourlyDemand)), 0),
+    [storeDrafts]
+  );
 
   /**
    * Oblicza pozycję bieżącego miesiąca w jego okresie rozliczeniowym.
@@ -552,48 +566,47 @@ export default function YourDraft() {
     };
 
     loadDrafts();
-  }, [currentStoreId, year, month, draftsGuard]);
+  }, [currentStoreId, year, month, draftsGuard, reloadKey]);
 
   // ======================== HELPERS ========================
 
-  const getCurrentDraft = (): number[] => {
-    if (selectedDate !== null) {
-      const date = new Date(year, month, selectedDate);
-      const dateStr = formatDateForBackend(date);
-      const found = drafts.find((d) => d.draftDate.startsWith(dateStr));
-      if (found) {
-        if (typeof found.hourlyDemand === 'string') {
-          try { return JSON.parse(found.hourlyDemand); } catch { return Array(24).fill(0); }
-        }
-        return found.hourlyDemand;
-      }
-      return Array(24).fill(0);
-    }
-    // Brak wybranego dnia (tryb szablonów) — wykres konkretnego dnia nie jest wtedy renderowany.
-    return Array(24).fill(0);
-  };
+  // Wybrany dzień (tryb edycji): dzień tygodnia, zapisany draft, szablon i godziny otwarcia
+  const selectedDayOfWeekJs = selectedDate !== null ? new Date(year, month, selectedDate).getDay() : null;
 
-  const draft = getCurrentDraft();
-
-  // Zapisany rekord draftu (z backendu) dla aktualnie wybranego konkretnego dnia —
-  // potrzebny do wyświetlenia "Ostatnia zmiana" (updatedAt/createdAt) w SelectionInfo.
   const selectedDraftRecord = useMemo(() => {
     if (selectedDate === null) return undefined;
     const dateStr = formatDateForBackend(new Date(year, month, selectedDate));
-    return drafts.find((d) => d.draftDate.startsWith(dateStr));
-  }, [drafts, year, month, selectedDate]);
+    return storeDrafts.find((d) => normalizeDraftDate(d.draftDate) === dateStr);
+  }, [storeDrafts, year, month, selectedDate]);
+
+  const draft = useMemo(() => toDemandArray(selectedDraftRecord?.hourlyDemand), [selectedDraftRecord]);
+
+  const selectedTemplateDemand = useMemo(() => {
+    const template = templatesFromDb.find((t) => t.dayOfWeek === selectedDayOfWeekJs);
+    return toDemandArray(template?.hourlyDemand);
+  }, [templatesFromDb, selectedDayOfWeekJs]);
+
+  const storeHoursForSelectedDay =
+    selectedDayOfWeekJs !== null ? storeHoursByDay?.[selectedDayOfWeekJs] ?? null : null;
 
   // "Ostatnia zmiana" całego draftu danego miesiąca — jeden, ogólny wskaźnik,
-  // wyświetlany niezależnie od trybu (Szablony / Edycja Konkretnych Dni) i
-  // niezależnie od wybranego dnia tygodnia. Najnowszy rekord spośród
-  // WSZYSTKICH draftów miesiąca — patrz getLatestDraftRecord.
-  const draftLastModifiedRecord = useMemo(() => {
-    return getLatestDraftRecord(drafts);
-  }, [drafts]);
+  // wyświetlany niezależnie od trybu. Najnowszy rekord spośród WSZYSTKICH draftów miesiąca.
+  const draftLastModifiedRecord = useMemo(() => getLatestDraftRecord(storeDrafts), [storeDrafts]);
+
+  // Stan widoku (sklep + miesiąc) — pozwala porzucić wynik zapisu, który wrócił po zmianie widoku.
+  const viewKeyRef = useRef('');
+  viewKeyRef.current = `${currentStoreId}_${year}_${month}`;
 
   // ======================== HANDLERS ========================
 
+  /** Zwraca true, jeśli można porzucić edytor dnia (brak zmian albo użytkownik potwierdził). */
+  const confirmDiscardUnsavedDay = (): boolean => {
+    if (!editDirty) return true;
+    return window.confirm(DISCARD_CONFIRM_MESSAGE);
+  };
+
   const handleMonthChange = (newYear: number, newMonth: number) => {
+    if (activeMode === 'edit' && !confirmDiscardUnsavedDay()) return;
     setYear(newYear);
     setMonth(newMonth);
     // Wybrany dzień (np. 31) może nie istnieć w nowym miesiącu — inaczej new Date(...) przeskoczyłoby na kolejny miesiąc.
@@ -601,79 +614,28 @@ export default function YourDraft() {
     setSelectedDate((prev) => (prev === null ? null : Math.min(prev, daysInNewMonth)));
   };
 
-  const handleDateSelect = (day: number | null) => {
-    setSelectedDate(day);
-    if (day !== null) setActiveMode('edit');
+  const shiftMonth = (delta: number) => {
+    const target = new Date(year, month + delta, 1);
+    handleMonthChange(target.getFullYear(), target.getMonth());
   };
 
-  const handleModeChange = (mode: 'templates' | 'edit' | 'hoursConfirmation') => {
+  const handleDateSelect = (day: number) => {
+    if (day === selectedDate) return;
+    if (!confirmDiscardUnsavedDay()) return;
+    setSelectedDate(day);
+  };
+
+  const handleModeChange = (mode: DraftModeId) => {
+    if (mode === activeMode) return;
+    if (activeMode === 'edit' && !confirmDiscardUnsavedDay()) return;
     setActiveMode(mode);
     if (mode === 'templates') {
       setSelectedDate(null);
     } else if (mode === 'edit') {
-      setSelectedDate(1);
-    }
-  };
-
-  const handleLoadSample = async () => {
-    if (!currentStoreId) return;
-    if (selectedDate === null) { toast.warning('Wybierz konkretny dzień'); return; }
-
-    try {
-      const date = new Date(year, month, selectedDate);
-      const dateStr = formatDateForBackend(date);
-      const sampleDraft = createSampleDraft();
-
-      if (!assertWithinLastMonthBudget(dateStr, sampleDraft)) return;
-
-      let existing = drafts.find((d) => d.draftDate === dateStr);
-
-      if (existing) {
-        const updated = await draftService.update(currentStoreId, existing.id, {
-          draftDate: dateStr,
-          hourlyDemand: sampleDraft,
-        });
-        setDrafts((prev) => prev.map((d) => (d.id === existing!.id ? updated : d)));
-        toast.success('Załadowano przykładowy grafik');
-      } else {
-        try {
-          const created = await draftService.create(currentStoreId, {
-            draftDate: dateStr,
-            hourlyDemand: sampleDraft,
-          });
-          setDrafts((prev) => [...prev, created]);
-          toast.success('Załadowano przykładowy grafik');
-        } catch (createError) {
-          const errorMsg = createError instanceof Error ? createError.message : '';
-          if (errorMsg.includes('already exists')) {
-            const response = await draftService.getByDateRange(
-              currentStoreId,
-              formatDateForBackend(new Date(year, month, 1)),
-              formatDateForBackend(new Date(year, month + 1, 0))
-            );
-            setDrafts(response.content);
-            const foundDraft = response.content.find((d) => {
-              const draftDate = parseDateFromBackend(d.draftDate);
-              return draftDate.getDate() === selectedDate &&
-                draftDate.getMonth() === month &&
-                draftDate.getFullYear() === year;
-            });
-            if (foundDraft) {
-              const updated = await draftService.update(currentStoreId, foundDraft.id, {
-                draftDate: dateStr,
-                hourlyDemand: sampleDraft,
-              });
-              setDrafts((prev) => prev.map((d) => (d.id === foundDraft.id ? updated : d)));
-              toast.success('Załadowano przykładowy grafik');
-            }
-          } else {
-            throw createError;
-          }
-        }
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Nie udało się załadować przykładu';
-      toast.error(message);
+      // Domyślnie dzisiejszy dzień, jeśli oglądamy bieżący miesiąc; w innym przypadku pierwszy dzień miesiąca.
+      const today = new Date();
+      const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+      setSelectedDate(isCurrentMonth ? today.getDate() : 1);
     }
   };
 
@@ -697,67 +659,59 @@ export default function YourDraft() {
     }
   };
 
-  const handleResetDraft = async () => {
-    if (!currentStoreId) return;
-    if (selectedDate === null) { toast.warning('Wybierz konkretny dzień'); return; }
-
-    const date = new Date(year, month, selectedDate);
-    const dateStr = formatDateForBackend(date);
-    const emptyDraft = createEmptyDraft();
-
-    try {
-      const existing = drafts.find((d) => d.draftDate === dateStr);
-      if (existing) {
-        const updated = await draftService.update(currentStoreId, existing.id, {
-          draftDate: dateStr,
-          hourlyDemand: emptyDraft,
-        });
-        setDrafts((prev) => prev.map((d) => (d.id === existing.id ? updated : d)));
-        toast.success('Zresetowano grafik');
-      } else {
-        const created = await draftService.create(currentStoreId, {
-          draftDate: dateStr,
-          hourlyDemand: emptyDraft,
-        });
-        setDrafts((prev) => [...prev, created]);
-        toast.success('Utworzono pusty grafik');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Nie udało się zresetować grafiku';
-      toast.error(message);
-    }
-  };
-
   /**
-   * Zapis z DraftChart (tryb 2).
+   * Zapis z edytora dnia (tryb 2). Zwraca true tylko, gdy dzień został zapisany —
+   * edytor po false zachowuje niezapisane wartości.
    */
-  const handleDraftChartSave = async (values: number[]) => {
-    if (!currentStoreId) return;
-    if (selectedDate === null) { toast.warning('Wybierz konkretny dzień'); return; }
+  const handleDraftChartSave = async (values: number[]): Promise<boolean> => {
+    if (!currentStoreId) return false;
+    if (selectedDate === null) { toast.warning('Wybierz konkretny dzień'); return false; }
 
-    const date = new Date(year, month, selectedDate);
-    const dateStr = formatDateForBackend(date);
+    const storeId = currentStoreId;
+    const dateStr = formatDateForBackend(new Date(year, month, selectedDate));
+    const savedViewKey = viewKeyRef.current;
 
-    if (!assertWithinLastMonthBudget(dateStr, values)) return;
+    if (!assertWithinLastMonthBudget(dateStr, values)) return false;
+
+    // Zastępuje (lub dodaje) zapisany rekord w stanie — tylko jeśli widok się nie zmienił w trakcie zapisu.
+    const applySaved = (saved: ResponseDemandDraftDTO) => {
+      if (viewKeyRef.current !== savedViewKey) return;
+      setDrafts((prev) =>
+        prev.some((d) => d.id === saved.id)
+          ? prev.map((d) => (d.id === saved.id ? saved : d))
+          : [...prev, saved]
+      );
+    };
 
     try {
-      const existing = drafts.find((d) => d.draftDate === dateStr);
+      const existing = storeDrafts.find((d) => normalizeDraftDate(d.draftDate) === dateStr);
       if (existing) {
-        const updated = await draftService.update(currentStoreId, existing.id, {
-          draftDate: dateStr,
-          hourlyDemand: values,
-        });
-        setDrafts((prev) => prev.map((d) => (d.id === existing.id ? updated : d)));
+        applySaved(await draftService.update(storeId, existing.id, { draftDate: dateStr, hourlyDemand: values }));
       } else {
-        const created = await draftService.create(currentStoreId, {
-          draftDate: dateStr,
-          hourlyDemand: values,
-        });
-        setDrafts((prev) => [...prev, created]);
+        try {
+          applySaved(await draftService.create(storeId, { draftDate: dateStr, hourlyDemand: values }));
+        } catch (createError) {
+          // Draft tego dnia mógł powstać w międzyczasie (np. zapis szablonu przez innego użytkownika) —
+          // pobieramy aktualną listę i nadpisujemy istniejący rekord.
+          const message = createError instanceof Error ? createError.message : '';
+          if (!message.includes('already exists')) throw createError;
+
+          const response = await draftService.getByDateRange(
+            storeId,
+            formatDateForBackend(new Date(year, month, 1)),
+            formatDateForBackend(new Date(year, month + 1, 0))
+          );
+          const found = response.content.find((d) => normalizeDraftDate(d.draftDate) === dateStr);
+          if (!found) throw createError;
+          applySaved(await draftService.update(storeId, found.id, { draftDate: dateStr, hourlyDemand: values }));
+        }
       }
       toast.success('Zapisano zmiany');
+      return true;
     } catch (error) {
-      toast.error('Nie udało się zapisać zmian');
+      const message = error instanceof Error ? error.message : '';
+      toast.error(message ? `Nie udało się zapisać zmian: ${message}` : 'Nie udało się zapisać zmian');
+      return false;
     }
   };
 
@@ -794,7 +748,7 @@ export default function YourDraft() {
             <p className="text-red-300/80 text-sm mt-0.5">{error}</p>
           </div>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => setReloadKey((k) => k + 1)}
             className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors"
           >
             Ponów próbę
@@ -812,12 +766,17 @@ export default function YourDraft() {
       : []),
   ];
 
+  const selectedDayLabel =
+    selectedDate !== null && selectedDayOfWeekJs !== null
+      ? `${DAYS_OF_WEEK[(selectedDayOfWeekJs + 6) % 7]}, ${selectedDate} ${MONTHS_GENITIVE[month]}`
+      : '';
+
   return (
     <div className="space-y-6">
-      {/* ============ NAGŁÓWEK: tytuł modułu + ostatnia zmiana + okres rozliczeniowy ============ */}
+      {/* ============ NAGŁÓWEK: tytuł modułu + ostatnia zmiana + okres rozliczeniowy + miesiąc ============ */}
       <div className={`relative overflow-hidden ${GLASS_PANEL} p-5 sm:p-6`}>
         <HeaderAurora />
-        <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="relative flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 flex items-center justify-center shadow-lg shadow-blue-950/50 flex-shrink-0">
               <Sparkles className="w-6 h-6 text-white" />
@@ -836,19 +795,44 @@ export default function YourDraft() {
             </div>
           </div>
 
-          {/* Odznaczka okresu rozliczeniowego */}
-          {billingPeriodInfo && (
-            <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 bg-indigo-950/50 border border-indigo-700/40 rounded-xl">
-              <BillingPeriodRing current={billingPeriodInfo.current} total={billingPeriodInfo.total} />
-              <div className="leading-tight">
-                <p className="text-[11px] uppercase tracking-wide font-semibold text-indigo-400">Okres rozliczeniowy</p>
-                <p className="text-sm font-semibold text-indigo-100">
-                  Miesiąc {billingPeriodInfo.current} z {billingPeriodInfo.total}
-                  {isLastMonthOfPeriod && <span className="ml-1.5 text-amber-400">· ostatni</span>}
-                </p>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Odznaczka okresu rozliczeniowego */}
+            {billingPeriodInfo && (
+              <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 bg-indigo-950/50 border border-indigo-700/40 rounded-xl">
+                <BillingPeriodRing current={billingPeriodInfo.current} total={billingPeriodInfo.total} />
+                <div className="leading-tight">
+                  <p className="text-[11px] uppercase tracking-wide font-semibold text-indigo-400">Okres rozliczeniowy</p>
+                  <p className="text-sm font-semibold text-indigo-100">
+                    Miesiąc {billingPeriodInfo.current} z {billingPeriodInfo.total}
+                    {isLastMonthOfPeriod && <span className="ml-1.5 text-amber-400">· ostatni</span>}
+                  </p>
+                </div>
               </div>
+            )}
+
+            {/* Przełącznik miesiąca — wspólny dla wszystkich trybów */}
+            <div className="flex items-center bg-slate-900/60 border border-slate-700/70 rounded-xl">
+              <button
+                type="button"
+                onClick={() => shiftMonth(-1)}
+                aria-label="Poprzedni miesiąc"
+                className="w-10 h-11 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/50 rounded-l-xl transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="min-w-[150px] text-center text-base font-bold text-white tabular-nums" aria-live="polite">
+                {MONTHS[month]} {year}
+              </span>
+              <button
+                type="button"
+                onClick={() => shiftMonth(1)}
+                aria-label="Następny miesiąc"
+                className="w-10 h-11 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/50 rounded-r-xl transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -857,121 +841,95 @@ export default function YourDraft() {
 
       {/* ============ MODE 1: SZABLONY ============ */}
       {activeMode === 'templates' && (
-        <div key="templates" className="draft-fade-in grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* TemplateManager */}
-          <div className="lg:col-span-2">
-            <TemplateManager
-              storeId={currentStoreId}
-              year={year}
-              month={month}
-              maxValue={maxStaffFromStore}
-              drafts={drafts}
-              activeNonWarehouseCount={monthlyNormData?.activeNonWarehouseCount ?? activeNonWarehouseCount}
-              totalEmployeeNorm={monthlyNormData?.totalEmployeeNorm ?? 0}
-              confirmedDraftHours={confirmedDraftHours}
-              totalVacationDays={totalVacationDays}
-              totalDelegationDays={totalDelegationDays}
-              warehousemanName={warehouseman ? `${warehouseman.firstName} ${warehouseman.lastName}` : null}
-              // Bez załadowanych norm nie blokujemy zapisu budżetem 0 h (tak samo jak assertWithinLastMonthBudget)
-              isLastMonthOfPeriod={isLastMonthOfPeriod && monthlyNormData !== null}
-              openHour={storeHoursForTemplateDay?.openHour}
-              closeHour={storeHoursForTemplateDay?.closeHour}
-              onDayOfWeekChange={setSelectedTemplateDay}
-              onTemplatesSaved={reloadDraftsAfterTemplateSave}
-            />
-          </div>
-
-          {/* Kalendarz + statystyki */}
-          <div className="space-y-4">
-            <div className={`${GLASS_PANEL} p-4 flex items-center gap-3`}>
-              <div className="w-9 h-9 rounded-lg bg-blue-600/20 border border-blue-600/30 flex items-center justify-center flex-shrink-0">
-                <LayoutTemplate className="w-4 h-4 text-blue-400" />
-              </div>
-              <p className="text-slate-300 text-sm">
-                <span className="block text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Szablon dla</span>
-                <span className="font-semibold text-white">{DAYS_OF_WEEK[(selectedTemplateDay + 6) % 7]}</span>
-              </p>
-            </div>
-            <div className={`${GLASS_PANEL} p-4`}>
-              <MiniCalendar
-                year={year}
-                month={month}
-                selectedDate={selectedDate}
-                drafts={drafts}
-                holidayDates={holidayDates}
-                onMonthChange={handleMonthChange}
-                onDateSelect={handleDateSelect}
-              />
-            </div>
-          </div>
+        <div key="templates" className="draft-fade-in">
+          <TemplateManager
+            storeId={currentStoreId}
+            year={year}
+            month={month}
+            maxValue={maxStaffFromStore}
+            drafts={drafts}
+            activeNonWarehouseCount={monthlyNormData?.activeNonWarehouseCount ?? activeNonWarehouseCount}
+            totalEmployeeNorm={monthlyNormData?.totalEmployeeNorm ?? 0}
+            confirmedDraftHours={confirmedDraftHours}
+            totalVacationDays={totalVacationDays}
+            totalDelegationDays={totalDelegationDays}
+            warehousemanName={warehouseman ? `${warehouseman.firstName} ${warehouseman.lastName}` : null}
+            // Bez załadowanych norm nie blokujemy zapisu budżetem 0 h (tak samo jak assertWithinLastMonthBudget)
+            isLastMonthOfPeriod={isLastMonthOfPeriod && monthlyNormData !== null}
+            storeHoursByDay={storeHoursByDay}
+            selectedDayOfWeek={selectedTemplateDay}
+            onSelectDayOfWeek={setSelectedTemplateDay}
+            onTemplatesSaved={reloadDraftsAfterTemplateSave}
+          />
         </div>
       )}
 
       {/* ============ MODE 2: EDYCJA KONKRETNYCH DNI ============ */}
       {activeMode === 'edit' && (
-        <div key="edit" className="draft-fade-in space-y-6">
-          <div className={`${GLASS_PANEL} p-6 sm:p-8 space-y-8`}>
-            <DraftHeader onLoadSample={handleLoadSample} onReset={handleResetDraft} />
+        <div key="edit" className="draft-fade-in space-y-5">
+          {/* Estymacja draftu — tryb 2 */}
+          {monthlyNormData && (
+            <PeriodEstimation
+              confirmedDraftHours={confirmedDraftHours}
+              liveTemplateDraftHours={null}
+              activeNonWarehouseCount={monthlyNormData.activeNonWarehouseCount}
+              totalEmployeeNorm={monthlyNormData.totalEmployeeNorm}
+              totalVacationDays={totalVacationDays}
+              totalDelegationDays={totalDelegationDays}
+              peakStaff={peakStaff}
+            />
+          )}
 
-            <div className="space-y-4">
-              <SectionLabel>Wybór dnia i podgląd</SectionLabel>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-3">Wybierz dzień</h4>
-                  <MiniCalendar
-                    year={year}
-                    month={month}
-                    selectedDate={selectedDate}
-                    drafts={drafts}
-                    onMonthChange={handleMonthChange}
-                    onDateSelect={handleDateSelect}
-                  />
-                </div>
-
-                <div className="lg:col-span-2 space-y-4">
-                  <SelectionInfo
-                    month={month}
-                    year={year}
-                    selectedDayOfWeek={(selectedTemplateDay + 6) % 7}
-                    selectedDate={selectedDate}
-                    updatedAt={selectedDraftRecord?.updatedAt}
-                    createdAt={selectedDraftRecord?.createdAt}
-                    updatedByLabel={selectedDraftRecord?.updatedByLabel}
-                    createdByLabel={selectedDraftRecord?.createdByLabel}
-                  />
-                  <MonthlyPeopleChart drafts={drafts} year={year} month={month} />
-                </div>
-              </div>
-            </div>
-
-            {/* Estymacja draftu — tryb 2 */}
-            {monthlyNormData && (
-              <div className="space-y-4">
-                <SectionLabel>Estymacja okresu</SectionLabel>
-                <PeriodEstimation
-                  confirmedDraftHours={confirmedDraftHours}
-                  liveTemplateDraftHours={null}
-                  activeNonWarehouseCount={monthlyNormData.activeNonWarehouseCount}
-                  totalEmployeeNorm={monthlyNormData.totalEmployeeNorm}
-                  totalVacationDays={totalVacationDays}
-                  totalDelegationDays={totalDelegationDays}
-                />
-              </div>
-            )}
-
-            <div className="space-y-4">
-              <SectionLabel>Wykres i sterowanie godzinami</SectionLabel>
-              <DraftChart
-                key={`${currentStoreId}-${year}-${month}-${selectedDate}`}
-                draft={draft}
-                onSave={handleDraftChartSave}
-                maxValue={maxStaffFromStore}
-                openHour={storeHoursForSelectedDay?.openHour}
-                closeHour={storeHoursForSelectedDay?.closeHour}
+          <div className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-5 items-start">
+            <div className="space-y-4 lg:sticky lg:top-4">
+              <MiniCalendar
+                year={year}
+                month={month}
+                selectedDate={selectedDate}
+                days={monthDays}
+                closedWeekdays={closedWeekdays}
+                holidayDates={holidayDates}
+                unsavedDate={editDirty ? selectedDate : null}
+                onDateSelect={handleDateSelect}
+              />
+              <TemplateDiffList
+                month={month}
+                days={monthDays}
+                selectedDate={selectedDate}
+                onSelect={handleDateSelect}
               />
             </div>
 
-            <DraftStats draft={draft} />
+            <div className="min-w-0">
+              {selectedDate !== null && selectedDayOfWeekJs !== null ? (
+                <DraftChart
+                  key={`${currentStoreId}-${year}-${month}-${selectedDate}`}
+                  draft={draft}
+                  template={selectedTemplateDemand}
+                  templateLabel={`szablon ${WEEKDAY_GENITIVE[selectedDayOfWeekJs]}`}
+                  dateLabel={selectedDayLabel}
+                  hasDraft={!!selectedDraftRecord}
+                  onSave={handleDraftChartSave}
+                  onDirtyChange={setEditDirty}
+                  maxValue={maxStaffFromStore}
+                  openHour={storeHoursForSelectedDay?.openHour}
+                  closeHour={storeHoursForSelectedDay?.closeHour}
+                  headerExtra={
+                    <LastModifiedInfo
+                      updatedAt={selectedDraftRecord?.updatedAt}
+                      createdAt={selectedDraftRecord?.createdAt}
+                      updatedByLabel={selectedDraftRecord?.updatedByLabel}
+                      createdByLabel={selectedDraftRecord?.createdByLabel}
+                      className="mt-1.5"
+                    />
+                  }
+                />
+              ) : (
+                <div className={`${GLASS_PANEL} py-16 px-6 text-center text-slate-400 text-sm`}>
+                  Wybierz dzień w kalendarzu, aby edytować jego obsadę.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
