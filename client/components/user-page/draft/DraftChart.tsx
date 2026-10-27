@@ -1,242 +1,210 @@
 /**
- * DraftChart – Wersja zoptymalizowana (6-23 domyślnie, duże godziny, wysoki kontrast)
+ * DraftChart — edytor JEDNEGO konkretnego dnia (tryb "Edycja konkretnych dni").
+ *
+ * Opiera się na wspólnym HourlyDemandEditor. Wartości robocze trzymane są lokalnie, a "niezapisane zmiany"
+ * to po prostu różnica między wartościami roboczymi a zapisanym draftem (props `draft`) — dzięki temu
+ * nie ma osobnej flagi, która mogłaby się rozjechać (np. po nieudanym zapisie).
  */
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { Save, AlertCircle, ChevronUp, ChevronDown, Moon, Sun } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { CheckCircle2, Eraser, LayoutTemplate, Loader, Save, Sparkles, Undo2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HourlyDemandEditor } from '@/components/draft/HourlyDemandEditor';
+import { createSampleDraft, isSameDemand, toDemandArray } from '@/utils/draft.utils';
 
 interface DraftChartProps {
+  /** Zapisany stan dnia (24 wartości; same zera, gdy dla dnia nie ma jeszcze draftu). */
   draft: number[];
-  onSave: (values: number[]) => void;
+  /** Szablon dnia tygodnia wyliczony z miesiąca (24 wartości) — przerywany obrys na wykresie i "Z szablonu". */
+  template: number[];
+  /** Nazwa szablonu do legendy, np. "szablon środy". */
+  templateLabel: string;
+  /** Tytuł dnia, np. "Środa, 14 października". */
+  dateLabel: string;
+  /** Czy dla tego dnia istnieje już zapisany draft. */
+  hasDraft: boolean;
+  /** Zapis dnia. Zwraca true tylko, gdy zapis się powiódł (blokada budżetu / błąd → false). */
+  onSave: (values: number[]) => Promise<boolean>;
+  /** Informuje rodzica, czy są niezapisane zmiany (np. żeby ostrzec przed zmianą dnia). */
+  onDirtyChange?: (dirty: boolean) => void;
   maxValue?: number;
-  /** Godzina otwarcia sklepu (np. 9 dla 09:00). Kreska wyświetlana między (openHour-1) a openHour. */
+  /** Godzina otwarcia sklepu (np. 9 dla 09:00). */
   openHour?: number;
-  /** Godzina zamknięcia sklepu (np. 20 dla 20:00). Kreska wyświetlana między (closeHour-1) a closeHour. */
+  /** Godzina zamknięcia sklepu (np. 20 dla 20:00). */
   closeHour?: number;
+  /** Dodatkowa informacja pod tytułem (np. "Ostatnia zmiana: ..."). */
+  headerExtra?: ReactNode;
 }
 
-export function DraftChart({ draft, onSave, maxValue, openHour, closeHour }: DraftChartProps) {
-  const limit = maxValue ?? 20;
-  const [localDraft, setLocalDraft] = useState<number[]>([...draft]);
-  const [hasChanges, setHasChanges] = useState(false);
-  const [showNightHours, setShowNightHours] = useState(false);
-  
-  const [dragging, setDragging] = useState<number | null>(null);
-  const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
+export function DraftChart({
+  draft,
+  template,
+  templateLabel,
+  dateLabel,
+  hasDraft,
+  onSave,
+  onDirtyChange,
+  maxValue,
+  openHour,
+  closeHour,
+  headerExtra,
+}: DraftChartProps) {
+  const limit = Math.max(1, maxValue ?? 20);
+  const [localDraft, setLocalDraft] = useState<number[]>(() => toDemandArray(draft));
+  const [saving, setSaving] = useState(false);
 
   // Synchronizacja z propsami — po ZAWARTOŚCI draftu, nie po referencji tablicy.
-  // Rodzic (YourDraft.getCurrentDraft) zwraca nową tablicę przy każdym renderze (np. zera dla dnia
-  // bez zapisanego draftu), więc zależność od `draft` kasowała niezapisane zmiany użytkownika przy
-  // każdym odświeżeniu rodzica. Zmiana dnia/sklepu/miesiąca resetuje komponent przez `key` w rodzicu.
+  // Rodzic zwraca nową tablicę przy każdym renderze (np. zera dla dnia bez zapisanego draftu),
+  // więc zależność od `draft` kasowała niezapisane zmiany użytkownika przy każdym odświeżeniu rodzica.
+  // Zmiana dnia/sklepu/miesiąca resetuje komponent przez `key` w rodzicu.
   const draftKey = draft.join(',');
   useEffect(() => {
-    setLocalDraft([...draft]);
-    setHasChanges(false);
+    setLocalDraft(toDemandArray(draft));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
-  // Zakres godzin: 6-22 (dzienne) lub 0-23 (pełne)
-  const displayedHours = showNightHours 
-    ? Array.from({ length: 24 }, (_, i) => i)
-    : Array.from({ length: 17 }, (_, i) => i + 6);
+  const dirty = !isSameDemand(localDraft, draft);
+  const isManual = hasDraft && !isSameDemand(draft, template) && template.some((v) => v > 0);
+  const matchesTemplate = isSameDemand(localDraft, template);
+  const isEmpty = localDraft.every((v) => v === 0);
 
-  const setValue = useCallback((hour: number, newVal: number) => {
-    const clamped = Math.max(0, Math.min(limit, Math.round(newVal)));
-    setLocalDraft(prev => {
-      if (prev[hour] === clamped) return prev;
-      const newDraft = [...prev];
-      newDraft[hour] = clamped;
-      return newDraft;
+  const onDirtyRef = useRef(onDirtyChange);
+  onDirtyRef.current = onDirtyChange;
+  useEffect(() => {
+    onDirtyRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => onDirtyRef.current?.(false), []);
+
+  const handleChangeHour = useCallback((hour: number, value: number) => {
+    setLocalDraft((prev) => {
+      if (prev[hour] === value) return prev;
+      const next = [...prev];
+      next[hour] = value;
+      return next;
     });
-    setHasChanges(true);
-  }, [limit]);
+  }, []);
 
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (dragging === null) return;
-    const rect = columnRefs.current[dragging]?.getBoundingClientRect();
-    if (!rect) return;
-    const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-    setValue(dragging, (1 - y / rect.height) * limit);
-  }, [dragging, limit, setValue]);
+  const handleSave = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      // Po udanym zapisie rodzic aktualizuje `draft`, a efekt wyżej zsynchronizuje wartości robocze.
+      // Po nieudanym — wartości robocze zostają i nadal są oznaczone jako niezapisane.
+      await onSave([...localDraft]);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const badge = dirty
+    ? { text: 'Niezapisane zmiany', classes: 'text-amber-300 bg-amber-500/10 border-amber-500/40' }
+    : isManual
+    ? { text: 'Edytowany ręcznie', classes: 'text-amber-300 bg-amber-500/10 border-amber-500/30' }
+    : hasDraft
+    ? { text: 'Zgodny z szablonem', classes: 'text-slate-300 bg-slate-800/60 border-slate-700' }
+    : { text: 'Brak draftu', classes: 'text-slate-400 bg-slate-800/60 border-slate-700' };
 
   return (
-    <div className="bg-[#0f172a] border border-slate-700 rounded-xl overflow-hidden shadow-2xl">
-      {/* Header */}
-      <div className="p-5 border-b border-slate-700 bg-slate-900/80 flex items-center justify-between gap-4">
-        <div>
-          <h3 className="text-xl font-black text-white tracking-tight">Zapotrzebowanie</h3>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-            Limit: {limit} os. {hasChanges && <span className="text-amber-500 ml-2 animate-pulse">● Niezapisane</span>}
-          </p>
-          {(openHour !== undefined || closeHour !== undefined) && (
-            <div className="flex items-center gap-3 mt-1">
-              {openHour !== undefined && (
-                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400">
-                  <span style={{ display: 'inline-block', width: 12, borderTop: '2px dashed #34d399' }} />
-                  Otwarcie {String(openHour).padStart(2, '0')}:00
-                </span>
-              )}
-              {closeHour !== undefined && (
-                <span className="flex items-center gap-1 text-[10px] font-bold text-red-400">
-                  <span style={{ display: 'inline-block', width: 12, borderTop: '2px dashed #f87171' }} />
-                  Zamknięcie {String(closeHour).padStart(2, '0')}:00
-                </span>
-              )}
-            </div>
-          )}
+    <div className="space-y-4">
+      <div className="bg-[#0f172a] border border-slate-700 rounded-2xl shadow-2xl">
+        <div className="flex flex-wrap items-start justify-between gap-3 p-5 border-b border-slate-700 bg-slate-900/60 rounded-t-2xl">
+          <div className="min-w-0">
+            <h3 className="text-xl font-black text-white tracking-tight">{dateLabel}</h3>
+            <p className="text-sm text-slate-400 mt-0.5">Indywidualny draft tego dnia — nie zmienia szablonu ani pozostałych dni.</p>
+            {headerExtra}
+          </div>
+          <span className={cn('text-xs font-bold border rounded-lg px-2.5 py-1', badge.classes)}>{badge.text}</span>
         </div>
-        
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowNightHours(!showNightHours)}
-            className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase transition-all border",
-              showNightHours 
-                ? "bg-amber-500/10 border-amber-500/50 text-amber-500" 
-                : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
-            )}
-          >
-            {showNightHours ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
-            {showNightHours ? "Ukryj godziny nocne" : "Pokaż godziny nocne"}
-          </button>
 
-          <button 
-            onClick={() => { onSave(localDraft); setHasChanges(false); }}
-            disabled={!hasChanges}
-            className={cn("px-6 py-2.5 rounded-xl font-black transition-all flex items-center gap-2 text-sm uppercase", 
-              hasChanges 
-                ? "bg-emerald-500 hover:bg-emerald-400 text-slate-900 shadow-lg shadow-emerald-500/20" 
-                : "bg-slate-800 text-slate-500 cursor-not-allowed")}
-          >
-            <Save className="w-4 h-4" /> Zapisz
-          </button>
+        <div className="p-5">
+          <HourlyDemandEditor
+            values={localDraft}
+            onChangeHour={handleChangeHour}
+            baseline={template}
+            baselineKind="template"
+            baselineLabel={templateLabel}
+            maxValue={limit}
+            openHour={openHour}
+            closeHour={closeHour}
+            disabled={saving}
+            toolbar={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setLocalDraft(toDemandArray(template).map((v) => Math.min(v, limit)))}
+                  disabled={saving || matchesTemplate}
+                  className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wide rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:text-white hover:border-slate-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <LayoutTemplate className="w-3.5 h-3.5" />
+                  Przywróć z szablonu
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocalDraft(Array(24).fill(0))}
+                  disabled={saving || isEmpty}
+                  className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wide rounded-lg border border-red-900/60 text-red-400 hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-red-400 disabled:cursor-not-allowed"
+                >
+                  <Eraser className="w-3.5 h-3.5" />
+                  Wyczyść dzień
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocalDraft(createSampleDraft().map((v) => Math.min(v, limit)))}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wide rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Przykład
+                </button>
+              </>
+            }
+          />
         </div>
       </div>
 
-      <div className="p-4 bg-[#020617]">
-        <div className="w-full">
-          {/* Wykres */}
-          <div className="relative flex items-end" style={{ height: 260 }}>
-            <div className="flex-1 flex items-end gap-1.5 h-full border-b-2 border-slate-800 pb-10">
-              {displayedHours.map((hour, index) => {
-                const value = localDraft[hour] ?? 0;
-                const heightPct = (value / limit) * 100;
-                const isNight = hour < 6 || hour > 22;
-
-                // Kreski pionowe: wyświetlamy PRZED słupkiem danej godziny
-                // openHour=9 → kreska przed indeksem godziny 9 (między 8 a 9)
-                // closeHour=20 → kreska przed indeksem godziny 20 (między 19 a 20)
-                const showOpenLine = openHour !== undefined && hour === openHour;
-                const showCloseLine = closeHour !== undefined && hour === closeHour;
-
-                return (
-                  <div key={hour} className="flex-1 h-full flex flex-col justify-end group relative">
-                    {/* Pionowa przerywana kreska otwarcia sklepu */}
-                    {showOpenLine && (
-                      <div
-                        className="absolute left-0 top-0 bottom-10 z-10 flex flex-col items-center"
-                        style={{ transform: 'translateX(-50%)' }}
-                      >
-                        <div
-                          className="w-0 h-full"
-                          style={{
-                            borderLeft: '2px dashed #34d399',
-                            height: '100%',
-                          }}
-                        />
-                        <span
-                          className="text-[9px] font-black text-emerald-400 whitespace-nowrap mt-1 bg-[#020617] px-1 rounded"
-                          style={{ position: 'absolute', bottom: '-18px' }}
-                        >
-                          otw.
-                        </span>
-                      </div>
-                    )}
-                    {/* Pionowa przerywana kreska zamknięcia sklepu */}
-                    {showCloseLine && (
-                      <div
-                        className="absolute left-0 top-0 bottom-10 z-10 flex flex-col items-center"
-                        style={{ transform: 'translateX(-50%)' }}
-                      >
-                        <div
-                          className="w-0 h-full"
-                          style={{
-                            borderLeft: '2px dashed #f87171',
-                            height: '100%',
-                          }}
-                        />
-                        <span
-                          className="text-[9px] font-black text-red-400 whitespace-nowrap mt-1 bg-[#020617] px-1 rounded"
-                          style={{ position: 'absolute', bottom: '-18px' }}
-                        >
-                          zam.
-                        </span>
-                      </div>
-                    )}
-                    <div
-                      ref={(el) => { columnRefs.current[hour] = el; }}
-                      onPointerDown={(e) => { 
-                        setDragging(hour); 
-                        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); 
-                      }}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={(e) => { 
-                        setDragging(null); 
-                        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {} 
-                      }}
-                      className="relative w-full bg-slate-800/10 rounded-t-md cursor-ns-resize touch-none hover:bg-slate-800/20 transition-all"
-                      style={{ height: '100%' }}
-                    >
-                      <div
-                        className={cn(
-                          "absolute bottom-0 left-0 right-0 rounded-t-md transition-all flex flex-col items-center",
-                          dragging === hour ? "bg-cyan-400" : "bg-gradient-to-t from-blue-700 to-cyan-400"
-                        )}
-                        style={{ height: `${heightPct}%`, minHeight: value > 0 ? '4px' : '0' }}
-                      >
-                        {value > 0 && (
-                          <div className="mt-1.5 px-1 py-0.5 bg-white rounded shadow-md border border-white">
-                            <span className="text-[10px] font-black text-slate-900 leading-none select-none">
-                              {value}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {/* Godzina - Zgodnie z Twoją prośbą: większa i czytelniejsza */}
-                    <div className={cn(
-                      "flex flex-col items-center leading-none mt-3 font-mono transition-colors tracking-tighter",
-                      isNight ? "text-amber-500 font-black" : "text-slate-500 group-hover:text-white"
-                    )}>
-                      <span className="text-xs font-bold">{hour.toString().padStart(2, '0')}</span>
-                      <span className="text-[9px] font-semibold opacity-60">·</span>
-                      <span className="text-[9px] font-semibold opacity-60">{(hour + 1).toString().padStart(2, '0')}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Przyciski +/- */}
-          <div className="flex gap-1.5 mt-4">
-            {displayedHours.map((hour) => (
-              <div key={hour} className="flex-1 flex flex-col gap-1">
-                <button 
-                  onClick={() => setValue(hour, (localDraft[hour] ?? 0) + 1)}
-                  className="h-7 bg-slate-800/80 hover:bg-emerald-500 text-white rounded-md flex items-center justify-center border border-slate-700 transition-colors"
-                >
-                  <ChevronUp className="w-3 h-3" />
-                </button>
-                <button 
-                  onClick={() => setValue(hour, (localDraft[hour] ?? 0) - 1)}
-                  className="h-7 bg-slate-800/80 hover:bg-red-500 text-white rounded-md flex items-center justify-center border border-slate-700 transition-colors"
-                >
-                  <ChevronDown className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
+      {/* Pasek zapisu */}
+      <div className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-2xl px-5 py-3.5 shadow-2xl shadow-black/40">
+        <div className="min-w-0">
+          {dirty ? (
+            <>
+              <p className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                Niezapisane zmiany w: {dateLabel}
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Zapis zmieni tylko ten jeden dzień. Szablon i pozostałe dni pozostaną bez zmian.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-400 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              Wszystkie zmiany zapisane
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLocalDraft(toDemandArray(draft))}
+            disabled={saving || !dirty}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-slate-600 text-slate-200 hover:bg-slate-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
+            <Undo2 className="w-4 h-4" />
+            Cofnij zmiany
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className={cn(
+              'px-6 py-2.5 rounded-xl font-black transition-all flex items-center gap-2 text-sm uppercase',
+              dirty && !saving
+                ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-900 shadow-lg shadow-emerald-500/20'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+            )}
+          >
+            {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Zapisz dzień
+          </button>
         </div>
       </div>
     </div>
