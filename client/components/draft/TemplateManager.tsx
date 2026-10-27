@@ -1,15 +1,44 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { PeriodEstimation } from './PeriodEstimation';
-import { Loader, Copy, Save, AlertCircle, ChevronUp, ChevronDown, Moon, Sun } from 'lucide-react';
+import { HourlyDemandEditor, DemandSparkline } from './HourlyDemandEditor';
+import { Loader, Copy, Save, Undo2, Eraser, Info, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { DayOfWeekTemplate, ResponseDemandDraftDTO } from '@/types/draft.types';
 import { getDatesForDayOfWeek, DEFAULT_DAY_TEMPLATES } from '@/types/draft.types';
 import { draftService } from '@/services/api-provider';
-import { formatDateForBackend, buildTemplatesFromDrafts } from '@/utils/draft.utils';
+import {
+  formatDateForBackend,
+  buildTemplatesFromDrafts,
+  normalizeDraftDate,
+  sumDemand,
+  toDemandArray,
+} from '@/utils/draft.utils';
 
-const MONTH_NAMES = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
-const CHART_HEIGHT = 260;
+/** Miesiące w miejscowniku ("w październiku") — do komunikatu o skutkach zapisu. */
+const MONTH_LOCATIVE = [
+  'styczniu', 'lutym', 'marcu', 'kwietniu', 'maju', 'czerwcu',
+  'lipcu', 'sierpniu', 'wrześniu', 'październiku', 'listopadzie', 'grudniu',
+];
+
+/** Dni tygodnia w bierniku liczby mnogiej ("wszystkie środy"), klucz = getDay(). */
+const WEEKDAY_PLURAL: Record<number, string> = {
+  0: 'niedziele',
+  1: 'poniedziałki',
+  2: 'wtorki',
+  3: 'środy',
+  4: 'czwartki',
+  5: 'piątki',
+  6: 'soboty',
+};
+
+export interface StoreHours {
+  openHour: number;
+  closeHour: number;
+}
+
+/** Godziny otwarcia sklepu per dzień tygodnia (klucz = getDay(), null = brak danych / zamknięte). */
+export type StoreHoursByDay = Record<number, StoreHours | null>;
 
 interface TemplateManagerProps {
   storeId: number;
@@ -32,12 +61,11 @@ interface TemplateManagerProps {
    *  potwierdzonych godzin (nie norma etatu) i zapis szablonu jest blokowany, jeśli
    *  przekroczyłby ten budżet. */
   isLastMonthOfPeriod?: boolean;
-  /** Godzina otwarcia sklepu dla aktualnie wybranego dnia tygodnia (np. 9 dla 09:00) */
-  openHour?: number;
-  /** Godzina zamknięcia sklepu dla aktualnie wybranego dnia tygodnia (np. 20 dla 20:00) */
-  closeHour?: number;
-  /** Callback wywoływany gdy użytkownik zmieni zakładkę dnia tygodnia */
-  onDayOfWeekChange?: (dayOfWeek: number) => void;
+  /** Godziny otwarcia sklepu dla każdego dnia tygodnia; undefined = jeszcze niezaładowane. */
+  storeHoursByDay?: StoreHoursByDay;
+  /** Wybrany dzień tygodnia (getDay(): 0=niedziela). Trzymany w rodzicu, żeby przeżył przełączenie trybu. */
+  selectedDayOfWeek: number;
+  onSelectDayOfWeek: (dayOfWeek: number) => void;
 }
 
 // ============================================================
@@ -66,21 +94,6 @@ function daySignature(hourlyDemand: number[]): string {
   return JSON.stringify(hourlyDemand);
 }
 
-function toDemandArray(hourlyDemand: number[] | string): number[] {
-  if (typeof hourlyDemand === 'string') {
-    try { return JSON.parse(hourlyDemand); } catch { return Array(24).fill(0); }
-  }
-  return hourlyDemand;
-}
-
-function sumDemand(hourlyDemand: number[] | string): number {
-  return toDemandArray(hourlyDemand).reduce((a, b) => a + b, 0);
-}
-
-function normalizeDate(draftDate: string): string {
-  return draftDate.split('T')[0];
-}
-
 function loadStoredDays(storeId: number, year: number, month: number): Record<number, StoredDay> | null {
   try {
     const raw = sessionStorage.getItem(getTemplateStorageKey(storeId, year, month));
@@ -98,7 +111,7 @@ function loadStoredDays(storeId: number, year: number, month: number): Record<nu
         value && typeof value.baseSignature === 'string' &&
         Array.isArray(value.hourlyDemand) && value.hourlyDemand.length === 24
       ) {
-        result[dow] = { baseSignature: value.baseSignature, hourlyDemand: value.hourlyDemand };
+        result[dow] = { baseSignature: value.baseSignature, hourlyDemand: toDemandArray(value.hourlyDemand) };
       }
     }
     return Object.keys(result).length > 0 ? result : null;
@@ -147,24 +160,22 @@ export function TemplateManager({
   totalDelegationDays,
   warehousemanName,
   isLastMonthOfPeriod = false,
-  openHour,
-  closeHour,
-  onDayOfWeekChange,
+  storeHoursByDay,
+  selectedDayOfWeek,
+  onSelectDayOfWeek,
 }: TemplateManagerProps) {
   const [templates, setTemplates] = useState<DayOfWeekTemplate[]>(emptyTemplates);
   /** Dni tygodnia z niezapisanymi zmianami (klucz = dayOfWeek). */
   const [dirtyBase, setDirtyBase] = useState<DirtyBase>({});
-  const [selectedTemplate, setSelectedTemplate] = useState<number>(1);
   const [saving, setSaving] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
-  const [showNightHours, setShowNightHours] = useState(false);
   // Stan selecta "Kopiuj z dnia...". Bez tego React traktowałby <select> jako
   // niekontrolowany — przeglądarka sama "zapamiętywałaby" ostatnio wybrany dzień
-  // w DOM, więc po przełączeniu zakładki dnia select wizualnie zostawałby na
+  // w DOM, więc po przełączeniu dnia select wizualnie zostawałby na
   // poprzednio wybranej opcji, mimo że logicznie powinien wrócić do placeholdera.
   const [copySourceDay, setCopySourceDay] = useState<string>('');
 
-  // Lustra stanu w refach — handlery (przeciąganie słupków, zapis po await) zawsze czytają
+  // Lustra stanu w refach — handlery (edycja, zapis po await) zawsze czytają
   // aktualne wartości, bez ryzyka zdezaktualizowanego closure.
   const templatesRef = useRef<DayOfWeekTemplate[]>(templates);
   const dirtyBaseRef = useRef<DirtyBase>({});
@@ -190,6 +201,13 @@ export function TemplateManager({
   }, [dbTemplates]);
   const dbDaySignaturesRef = useRef(dbDaySignatures);
   dbDaySignaturesRef.current = dbDaySignatures;
+
+  /** Ile razy dany dzień tygodnia występuje w wybranym miesiącu (np. 4 środy). */
+  const dayCounts = useMemo(() => {
+    const result: Record<number, number> = {};
+    for (let dow = 0; dow < 7; dow++) result[dow] = getDatesForDayOfWeek(year, month, dow).length;
+    return result;
+  }, [year, month]);
 
   /** Jedyne miejsce zmieniające stan szablonów: stan + refy + kopia robocza w sessionStorage. */
   const commit = useCallback((nextTemplates: DayOfWeekTemplate[], nextDirty: DirtyBase) => {
@@ -224,6 +242,7 @@ export function TemplateManager({
     templatesRef.current = emptyTemplates();
     dirtyBaseRef.current = {};
     setDirtyBase({});
+    setCopySourceDay('');
     setLoadingTemplates(!!storeId);
   }, [storeId, year, month]);
 
@@ -278,38 +297,43 @@ export function TemplateManager({
   }, [storeId, year, month, storeDrafts, dbTemplates, dbDaySignatures]);
 
   const maxCap = Math.max(maxValue, 1);
-  const currentTemplate = templates.find(t => t.dayOfWeek === selectedTemplate);
+  const currentTemplate = templates.find(t => t.dayOfWeek === selectedDayOfWeek);
+  const dbTemplate = dbTemplates.find(t => t.dayOfWeek === selectedDayOfWeek);
   const demand = currentTemplate?.hourlyDemand ?? [];
-  const displayedHours = showNightHours
-    ? Array.from({ length: 24 }, (_, i) => i)
-    : Array.from({ length: 17 }, (_, i) => i + 6);
+  const storeHours = storeHoursByDay?.[selectedDayOfWeek] ?? null;
 
-  const selectedDirty = dirtyBase[selectedTemplate] !== undefined;
+  const selectedDirty = dirtyBase[selectedDayOfWeek] !== undefined;
   const dirtyDayNames = templates.filter(t => dirtyBase[t.dayOfWeek] !== undefined).map(t => t.dayName);
   const otherDirtyDayNames = templates
-    .filter(t => t.dayOfWeek !== selectedTemplate && dirtyBase[t.dayOfWeek] !== undefined)
+    .filter(t => t.dayOfWeek !== selectedDayOfWeek && dirtyBase[t.dayOfWeek] !== undefined)
     .map(t => t.dayName);
   const anyDirty = dirtyDayNames.length > 0;
 
-  const [dragging, setDragging] = useState<number | null>(null);
-  const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const peakStaff = useMemo(
+    () => templates.reduce((max, t) => Math.max(max, ...t.hourlyDemand), 0),
+    [templates]
+  );
 
-  const setHourValue = useCallback((hour: number, newVal: number) => {
-    const clamped = Math.max(0, Math.min(maxCap, Math.round(newVal)));
-    applyEdit(selectedTemplate, prev => prev.map((v, i) => i === hour ? clamped : v));
-  }, [selectedTemplate, maxCap, applyEdit]);
-
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (dragging === null) return;
-    const rect = columnRefs.current[dragging]?.getBoundingClientRect();
-    if (!rect) return;
-    setHourValue(dragging, (1 - Math.max(0, Math.min(rect.height, e.clientY - rect.top)) / rect.height) * maxCap);
-  }, [dragging, maxCap, setHourValue]);
-
-  const handleSelectTemplate = (dayOfWeek: number) => {
-    setSelectedTemplate(dayOfWeek);
+  const handleSelectDay = (dayOfWeek: number) => {
+    onSelectDayOfWeek(dayOfWeek);
     setCopySourceDay('');
-    onDayOfWeekChange?.(dayOfWeek);
+  };
+
+  const handleChangeHour = useCallback((hour: number, value: number) => {
+    applyEdit(selectedDayOfWeek, prev => prev.map((v, i) => (i === hour ? value : v)));
+  }, [selectedDayOfWeek, applyEdit]);
+
+  /** Cofnięcie niezapisanych zmian JEDNEGO dnia tygodnia — wraca do wartości z bazy. */
+  const handleRevertSelectedDay = () => {
+    const base = dbTemplates.find(t => t.dayOfWeek === selectedDayOfWeek);
+    if (!base) return;
+    const nextTemplates = templatesRef.current.map(t =>
+      t.dayOfWeek === selectedDayOfWeek ? { ...t, hourlyDemand: [...base.hourlyDemand] } : t
+    );
+    const nextDirty = { ...dirtyBaseRef.current };
+    delete nextDirty[selectedDayOfWeek];
+    commit(nextTemplates, nextDirty);
+    setCopySourceDay('');
   };
 
   /**
@@ -318,7 +342,7 @@ export function TemplateManager({
    * Pozostałe dni tygodnia nie są ruszane — ani w bazie, ani w ich niezapisanych edycjach.
    */
   const handleSaveSelectedDay = async () => {
-    const dayOfWeek = selectedTemplate;
+    const dayOfWeek = selectedDayOfWeek;
     const template = templatesRef.current.find(t => t.dayOfWeek === dayOfWeek);
     if (!template) return;
 
@@ -333,7 +357,7 @@ export function TemplateManager({
         formatDateForBackend(new Date(year, month, 1)),
         formatDateForBackend(new Date(year, month + 1, 0))
       );
-      const existingMap = new Map(existing.content.map(d => [normalizeDate(d.draftDate), d]));
+      const existingMap = new Map(existing.content.map(d => [normalizeDraftDate(d.draftDate), d]));
 
       // W ostatnim miesiącu okresu rozliczeniowego totalEmployeeNorm to suma godzin
       // potwierdzonych w zakładce "Pozostałe godziny pracowników" (nie norma etatu) -
@@ -402,7 +426,7 @@ export function TemplateManager({
    * tylko gdy są niezapisane zmiany, żeby pokazać deltę "co zmieni się po zapisie".
    */
   const liveDraftHours = useMemo(() => {
-    const dbByDate = new Map(storeDrafts.map(d => [normalizeDate(d.draftDate), sumDemand(d.hourlyDemand)]));
+    const dbByDate = new Map(storeDrafts.map(d => [normalizeDraftDate(d.draftDate), sumDemand(d.hourlyDemand)]));
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     let total = 0;
     for (let day = 1; day <= daysInMonth; day++) {
@@ -420,7 +444,7 @@ export function TemplateManager({
 
   if (loadingTemplates) {
     return (
-      <div className="flex items-center justify-center py-16 gap-3 bg-[#0f172a] border border-slate-700 rounded-xl">
+      <div className="flex items-center justify-center py-16 gap-3 bg-[#0f172a] border border-slate-700 rounded-2xl">
         <Loader className="w-5 h-5 text-blue-400 animate-spin" />
         <span className="text-slate-400 text-sm">Ładowanie szablonów...</span>
       </div>
@@ -429,227 +453,204 @@ export function TemplateManager({
 
   if (!currentTemplate) return null;
 
-  return (
-    <div className="bg-[#0f172a] border border-slate-700 rounded-xl overflow-hidden shadow-2xl">
-      {/* Header */}
-      <div className="p-5 border-b border-slate-700 bg-slate-900/80 flex items-center justify-between">
-        <div>
-          <h3 className="text-xl font-black text-white tracking-tight flex items-center gap-3">
-            {MONTH_NAMES[month]} {year}
-            {anyDirty && <AlertCircle className="w-5 h-5 text-amber-500 animate-pulse" />}
-          </h3>
-          {/* Legenda kresek – wyświetlana gdy godziny sklepu są dostępne */}
-          {(openHour !== undefined || closeHour !== undefined) && (
-            <div className="flex items-center gap-3 mt-1">
-              {openHour !== undefined && (
-                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400">
-                  <span style={{ display: 'inline-block', width: 12, borderTop: '2px dashed #34d399' }} />
-                  Otwarcie {String(openHour).padStart(2, '0')}:00
-                </span>
-              )}
-              {closeHour !== undefined && (
-                <span className="flex items-center gap-1 text-[10px] font-bold text-red-400">
-                  <span style={{ display: 'inline-block', width: 12, borderTop: '2px dashed #f87171' }} />
-                  Zamknięcie {String(closeHour).padStart(2, '0')}:00
-                </span>
-              )}
-            </div>
-          )}
-          {/* Informacja o niezapisanych zmianach w INNYCH dniach tygodnia — "Zapisz" zapisuje tylko aktywny dzień */}
-          {otherDirtyDayNames.length > 0 && (
-            <p className="text-[10px] font-bold text-amber-400 mt-1">
-              Niezapisane zmiany także w: {otherDirtyDayNames.join(', ')} — każdy dzień zapisujesz osobno
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setShowNightHours(v => !v)}
-            className={cn("flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase transition-all border",
-              showNightHours ? "bg-amber-500/10 border-amber-500/50 text-amber-500" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white")}>
-            {showNightHours ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
-            {showNightHours ? "Ukryj godziny nocne" : "Pokaż godziny nocne"}
-          </button>
-          <button onClick={handleSaveSelectedDay} disabled={saving || !selectedDirty}
-            title={`Zapisuje szablon dnia: ${currentTemplate.dayName} (wszystkie takie dni w miesiącu)`}
-            className={cn("px-6 py-2.5 rounded-xl font-black transition-all flex items-center gap-2 text-sm uppercase",
-              selectedDirty ? "bg-emerald-500 text-slate-900 shadow-lg shadow-emerald-500/20" : "bg-slate-800 text-slate-500 cursor-not-allowed")}>
-            {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Zapisz: {currentTemplate.dayName}
-          </button>
-        </div>
-      </div>
+  const selectedDayCount = dayCounts[selectedDayOfWeek] ?? 0;
+  const selectedDayTotal = demand.reduce((a, b) => a + b, 0);
 
-      <div className="bg-amber-900/20 border-b border-amber-700/30 px-5 py-2 text-xs text-amber-400 flex items-center gap-2">
-        <span>⚠️</span>
+  return (
+    <div className="space-y-5">
+      {/* Wskaźniki okresu — props z rodzica, reaktywne */}
+      <PeriodEstimation
+        confirmedDraftHours={confirmedDraftHours}
+        liveTemplateDraftHours={anyDirty ? liveDraftHours : null}
+        activeNonWarehouseCount={activeNonWarehouseCount}
+        totalEmployeeNorm={totalEmployeeNorm}
+        totalVacationDays={totalVacationDays}
+        totalDelegationDays={totalDelegationDays}
+        peakStaff={peakStaff}
+      />
+
+      <div className="flex items-start gap-2.5 bg-amber-900/15 border border-amber-700/30 rounded-xl px-4 py-2.5 text-xs text-amber-300/90">
+        <Info className="w-4 h-4 flex-shrink-0 mt-px text-amber-400" />
         <span>
-          W planowaniu nie uwzględniamy magazyniera {warehousemanName ? ` (${warehousemanName})` : ''} — jeśli posiadasz dedykowanego pracownika, zaplanuj jego pracę w zakładce "Dostawy".
+          W planowaniu nie uwzględniamy magazyniera{warehousemanName ? ` (${warehousemanName})` : ''} — jeśli posiadasz dedykowanego pracownika, zaplanuj jego pracę w zakładce "Dostawy".
         </span>
       </div>
 
-      {/* PeriodEstimation – props z rodzica, reaktywne */}
-      <div className="px-5 py-3 border-b border-slate-800">
-        <PeriodEstimation
-          confirmedDraftHours={confirmedDraftHours}
-          liveTemplateDraftHours={anyDirty ? liveDraftHours : null}
-          activeNonWarehouseCount={activeNonWarehouseCount}
-          totalEmployeeNorm={totalEmployeeNorm}
-          totalVacationDays={totalVacationDays}
-          totalDelegationDays={totalDelegationDays}
-        />
-      </div>
-
-      {/* Tabs */}
-      <div className="bg-slate-950/50 p-2 flex gap-1 overflow-x-auto border-b border-slate-800">
-        {templates.map(t => {
-          const isDirty = dirtyBase[t.dayOfWeek] !== undefined;
-          return (
-            <button key={t.dayOfWeek} onClick={() => handleSelectTemplate(t.dayOfWeek)}
-              title={isDirty ? 'Niezapisane zmiany w tym dniu' : undefined}
-              className={cn("px-4 py-2 rounded-lg text-[10px] font-black transition-all whitespace-nowrap border-2",
-                selectedTemplate === t.dayOfWeek ? "bg-blue-600 border-blue-400 text-white" : "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300")}>
-              {t.dayName.toUpperCase()}
-              {isDirty && <span className="ml-1.5 text-amber-400">●</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Kopiuj z dnia — umieszczone NAD wykresem, żeby było widoczne bez przewijania */}
-      <div className="px-4 pt-3 pb-1 bg-[#020617] flex items-center gap-2">
-        <span className="text-[10px] font-black text-slate-500 uppercase whitespace-nowrap">Szybkie kopiowanie:</span>
-        <div className="relative">
-          <select
-            value={copySourceDay}
-            onChange={e => {
-              const sourceValue = e.target.value;
-              setCopySourceDay(sourceValue);
-              const source = templatesRef.current.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
-              if (source) {
-                applyEdit(selectedTemplate, () => [...source.hourlyDemand]);
-                toast.success('Skopiowano!');
-                setCopySourceDay('');
-              }
-            }} className="pl-3 pr-8 py-2 bg-slate-800 text-white text-[10px] rounded-xl font-black appearance-none border border-slate-700 uppercase">
-            <option value="">KOPIUJ Z DNIA...</option>
-            {templates.filter(t => t.dayOfWeek !== selectedTemplate).map(t => (
-              <option key={t.dayOfWeek} value={t.dayOfWeek}>{t.dayName}</option>
-            ))}
-          </select>
-          <Copy className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div className="p-4 bg-[#020617]">
-        <div className="w-full">
-          <div className="relative flex items-end" style={{ height: CHART_HEIGHT }}>
-            <div className="flex-1 flex items-end gap-1.5 h-full border-b-2 border-slate-800 pb-10">
-              {displayedHours.map(hour => {
-                const value = demand[hour] ?? 0;
-                const heightPct = (value / maxCap) * 100;
-                const isNight = hour < 6 || hour > 22;
-
-                // Kreski pionowe: wyświetlamy PRZED słupkiem danej godziny
-                // openHour=9  → kreska przed indeksem godziny 9 (między 8 a 9)
-                // closeHour=20 → kreska przed indeksem godziny 20 (między 19 a 20)
-                const showOpenLine = openHour !== undefined && hour === openHour;
-                const showCloseLine = closeHour !== undefined && hour === closeHour;
-
-                return (
-                  <div key={hour} className="flex-1 h-full flex flex-col justify-end group relative">
-                    {/* Pionowa przerywana kreska otwarcia sklepu */}
-                    {showOpenLine && (
-                      <div
-                        className="absolute left-0 top-0 bottom-10 z-10 flex flex-col items-center"
-                        style={{ transform: 'translateX(-50%)' }}
-                      >
-                        <div
-                          className="w-0 h-full"
-                          style={{
-                            borderLeft: '2px dashed #34d399',
-                            height: '100%',
-                          }}
-                        />
-                        <span
-                          className="text-[9px] font-black text-emerald-400 whitespace-nowrap mt-1 bg-[#020617] px-1 rounded"
-                          style={{ position: 'absolute', bottom: '-18px' }}
-                        >
-                          otw.
-                        </span>
-                      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-5 items-start">
+        {/* ============ Lista dni tygodnia ============ */}
+        <nav aria-label="Dni tygodnia" className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0">
+          {templates.map(t => {
+            const isSelected = t.dayOfWeek === selectedDayOfWeek;
+            const isDirty = dirtyBase[t.dayOfWeek] !== undefined;
+            const dayTotal = t.hourlyDemand.reduce((a, b) => a + b, 0);
+            const hours = storeHoursByDay?.[t.dayOfWeek];
+            const closed = storeHoursByDay !== undefined && (!hours || hours.openHour >= hours.closeHour);
+            return (
+              <button
+                key={t.dayOfWeek}
+                type="button"
+                onClick={() => handleSelectDay(t.dayOfWeek)}
+                aria-current={isSelected ? 'true' : undefined}
+                className={cn(
+                  'text-left rounded-xl border px-3.5 py-3 transition-colors min-w-[170px] lg:min-w-0',
+                  isSelected
+                    ? 'bg-blue-600/15 border-cyan-500/60 shadow-lg shadow-blue-950/40'
+                    : 'bg-slate-800/40 border-slate-700/70 hover:bg-slate-800/70 hover:border-slate-600'
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className={cn('text-sm font-bold', isSelected ? 'text-white' : 'text-slate-200')}>
+                    {t.dayName}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    {closed && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 bg-slate-700/60 rounded px-1.5 py-0.5">
+                        zamknięty
+                      </span>
                     )}
-                    {/* Pionowa przerywana kreska zamknięcia sklepu */}
-                    {showCloseLine && (
-                      <div
-                        className="absolute left-0 top-0 bottom-10 z-10 flex flex-col items-center"
-                        style={{ transform: 'translateX(-50%)' }}
-                      >
-                        <div
-                          className="w-0 h-full"
-                          style={{
-                            borderLeft: '2px dashed #f87171',
-                            height: '100%',
-                          }}
-                        />
-                        <span
-                          className="text-[9px] font-black text-red-400 whitespace-nowrap mt-1 bg-[#020617] px-1 rounded"
-                          style={{ position: 'absolute', bottom: '-18px' }}
-                        >
-                          zam.
-                        </span>
-                      </div>
+                    {isDirty && (
+                      <span
+                        className="w-2 h-2 rounded-full bg-amber-400"
+                        title="Niezapisane zmiany w tym dniu"
+                        role="img"
+                        aria-label="Niezapisane zmiany w tym dniu"
+                      />
                     )}
-                    <div ref={el => { columnRefs.current[hour] = el; }}
-                      onPointerDown={e => { setDragging(hour); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); }}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={e => { setDragging(null); try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {} }}
-                      className="relative w-full bg-slate-800/10 rounded-t-md cursor-ns-resize touch-none hover:bg-slate-800/20"
-                      style={{ height: '100%' }}>
-                      <div className={cn("absolute bottom-0 left-0 right-0 rounded-t-md flex flex-col items-center",
-                        dragging === hour ? "bg-cyan-400" : "bg-gradient-to-t from-blue-700 to-cyan-400")}
-                        style={{ height: `${heightPct}%`, minHeight: value > 0 ? '4px' : '0' }}>
-                        {value > 0 && (
-                          <div className="mt-1.5 px-1 py-0.5 bg-white rounded shadow-md">
-                            <span className="text-[10px] font-black text-slate-900 leading-none select-none">{value}</span>
-                          </div>
-                        )}
-                      </div>
+                  </span>
+                </div>
+                <DemandSparkline values={t.hourlyDemand} className="mt-2" />
+                <p className="mt-1.5 text-xs text-slate-400 tabular-nums">
+                  <span className={cn('font-bold', isSelected ? 'text-cyan-300' : 'text-slate-300')}>{dayTotal} h</span>
+                  {' '}/ dzień · {dayCounts[t.dayOfWeek]} dni w mies.
+                </p>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* ============ Edytor wybranego dnia ============ */}
+        <div className="space-y-4 min-w-0">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-2xl shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 p-5 border-b border-slate-700 bg-slate-900/60 rounded-t-2xl">
+              <div>
+                <h3 className="text-xl font-black text-white tracking-tight">{currentTemplate.dayName}</h3>
+                <p className="text-sm text-slate-400 mt-0.5">
+                  Szablon dla: {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]} {year}
+                  {' '}· {selectedDayCount} {selectedDayCount === 1 ? 'dzień' : 'dni'} · {selectedDayTotal} h dziennie
+                </p>
+              </div>
+              {selectedDirty && (
+                <span className="text-xs font-bold text-amber-300 bg-amber-500/10 border border-amber-500/40 rounded-lg px-2.5 py-1">
+                  Niezapisane zmiany
+                </span>
+              )}
+            </div>
+
+            <div className="p-5">
+              <HourlyDemandEditor
+                values={demand}
+                onChangeHour={handleChangeHour}
+                baseline={dbTemplate?.hourlyDemand ?? null}
+                baselineKind="saved"
+                baselineLabel="zapisane w bazie"
+                maxValue={maxCap}
+                openHour={storeHours?.openHour}
+                closeHour={storeHours?.closeHour}
+                disabled={saving}
+                toolbar={
+                  <>
+                    <div className="relative">
+                      <select
+                        aria-label="Kopiuj z innego dnia tygodnia"
+                        value={copySourceDay}
+                        disabled={saving}
+                        onChange={e => {
+                          const sourceValue = e.target.value;
+                          setCopySourceDay(sourceValue);
+                          const source = templatesRef.current.find(t => t.dayOfWeek === parseInt(sourceValue, 10));
+                          if (source) {
+                            applyEdit(selectedDayOfWeek, () => [...source.hourlyDemand]);
+                            toast.success(`Skopiowano z: ${source.dayName}. Zapisz, aby zatwierdzić.`);
+                            setCopySourceDay('');
+                          }
+                        }}
+                        className="pl-3 pr-8 py-2 bg-slate-800 text-slate-200 text-[11px] rounded-lg font-bold appearance-none border border-slate-700 uppercase tracking-wide disabled:opacity-50"
+                      >
+                        <option value="">Kopiuj z dnia...</option>
+                        {templates.filter(t => t.dayOfWeek !== selectedDayOfWeek).map(t => (
+                          <option key={t.dayOfWeek} value={t.dayOfWeek}>{t.dayName}</option>
+                        ))}
+                      </select>
+                      <Copy className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
                     </div>
-                    <div className={cn("flex flex-col items-center leading-none mt-3 font-mono tracking-tighter",
-                      isNight ? "text-amber-500" : "text-slate-400 group-hover:text-white")}>
-                      <span className="text-xs font-bold">{hour.toString().padStart(2, '0')}</span>
-                      <span className="text-[9px] font-semibold opacity-60">·</span>
-                      <span className="text-[9px] font-semibold opacity-60">{(hour + 1).toString().padStart(2, '0')}</span>
-                    </div>
-                  </div>
-                );
-              })}
+                    <button
+                      type="button"
+                      onClick={() => applyEdit(selectedDayOfWeek, () => Array(24).fill(0))}
+                      disabled={saving || selectedDayTotal === 0}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wide rounded-lg border border-red-900/60 text-red-400 hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-red-400 disabled:cursor-not-allowed"
+                    >
+                      <Eraser className="w-3.5 h-3.5" />
+                      Wyczyść dzień
+                    </button>
+                  </>
+                }
+              />
             </div>
           </div>
-          <div className="flex gap-1.5 mt-4">
-            {displayedHours.map(hour => (
-              <div key={hour} className="flex-1 flex flex-col gap-1">
-                <button onClick={() => setHourValue(hour, (demand[hour] ?? 0) + 1)}
-                  className="h-7 bg-slate-800/80 hover:bg-emerald-500 text-white rounded-md flex items-center justify-center border border-slate-700">
-                  <ChevronUp className="w-3 h-3" />
-                </button>
-                <button onClick={() => setHourValue(hour, (demand[hour] ?? 0) - 1)}
-                  className="h-7 bg-slate-800/80 hover:bg-red-500 text-white rounded-md flex items-center justify-center border border-slate-700">
-                  <ChevronDown className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
 
-      {/* Footer */}
-      <div className="p-5 bg-slate-900 border-t border-slate-700">
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => applyEdit(selectedTemplate, () => Array(24).fill(0))}
-            className="px-4 py-2 bg-slate-900 text-red-500 border border-red-900/50 text-xs rounded-xl font-black hover:bg-red-600 hover:text-white">
-            WYCZYŚĆ
-          </button>
+          {/* Pasek zapisu — mówi dokładnie, co zostanie zapisane */}
+          <div className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-2xl px-5 py-3.5 shadow-2xl shadow-black/40">
+            <div className="min-w-0">
+              {selectedDirty ? (
+                <>
+                  <p className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    Niezapisane zmiany w: {currentTemplate.dayName}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Zapis nadpisze wszystkie {selectedDayCount} {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]},
+                    także te edytowane ręcznie. Pozostałe dni tygodnia nie zostaną zmienione.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-slate-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  Brak niezapisanych zmian w: {currentTemplate.dayName}
+                </p>
+              )}
+              {otherDirtyDayNames.length > 0 && (
+                <p className="text-xs font-semibold text-amber-400 mt-1">
+                  Niezapisane zmiany także w: {otherDirtyDayNames.join(', ')} — każdy dzień zapisujesz osobno
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRevertSelectedDay}
+                disabled={saving || !selectedDirty}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-slate-600 text-slate-200 hover:bg-slate-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <Undo2 className="w-4 h-4" />
+                Cofnij zmiany
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSelectedDay}
+                disabled={saving || !selectedDirty}
+                title={`Zapisuje szablon dnia: ${currentTemplate.dayName} (wszystkie takie dni w miesiącu)`}
+                className={cn(
+                  'px-6 py-2.5 rounded-xl font-black transition-all flex items-center gap-2 text-sm uppercase',
+                  selectedDirty && !saving
+                    ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-900 shadow-lg shadow-emerald-500/20'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                )}
+              >
+                {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Zapisz: {currentTemplate.dayName}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
