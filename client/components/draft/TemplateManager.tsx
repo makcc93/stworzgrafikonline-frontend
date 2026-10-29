@@ -534,14 +534,10 @@ export function TemplateManager({
             <div className="flex flex-wrap items-start justify-between gap-3 p-5 border-b border-slate-700 bg-slate-900/60 rounded-t-2xl">
               <div>
                 <h3 className="text-xl font-black text-white tracking-tight">{currentTemplate.dayName}</h3>
-                <p className="text-sm text-slate-400 mt-0.5">
-<<<<<<< HEAD
-                  Szablon dla: {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]} {year}
-=======
-                  Szablon dla wszystkich {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]} {year}
->>>>>>> d014ac3 (Update application files and add manual setting monthly hours norm for Admin)
-                  {' '}· {selectedDayCount} {selectedDayCount === 1 ? 'dzień' : 'dni'} · {selectedDayTotal} h dziennie
-                </p>
+   <p className="text-sm text-slate-400 mt-0.5">
+     Szablon dla wszystkich {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]} {year}
+     {' '}· {selectedDayCount} {selectedDayCount === 1 ? 'dzień' : 'dni'} · {selectedDayTotal} h dziennie
+   </p>
               </div>
               {selectedDirty && (
                 <span className="text-xs font-bold text-amber-300 bg-amber-500/10 border border-amber-500/40 rounded-lg px-2.5 py-1">
