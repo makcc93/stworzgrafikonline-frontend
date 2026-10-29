@@ -535,7 +535,11 @@ export function TemplateManager({
               <div>
                 <h3 className="text-xl font-black text-white tracking-tight">{currentTemplate.dayName}</h3>
                 <p className="text-sm text-slate-400 mt-0.5">
+<<<<<<< HEAD
                   Szablon dla: {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]} {year}
+=======
+                  Szablon dla wszystkich {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]} {year}
+>>>>>>> d014ac3 (Update application files and add manual setting monthly hours norm for Admin)
                   {' '}· {selectedDayCount} {selectedDayCount === 1 ? 'dzień' : 'dni'} · {selectedDayTotal} h dziennie
                 </p>
               </div>

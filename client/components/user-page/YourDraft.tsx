@@ -7,7 +7,7 @@
  * ARCHITEKTURA LICZENIA GODZIN:
  * - confirmedDraftHours: useMemo z drafts[] → automatycznie aktualny po każdym zapisie (tryb 1 i 2)
  * - monthlyNormData: pobierany z backendu (endpoint /monthlyNorm), zawiera:
- *     - standardWorkingHours (np. 160 dla maja 2026 z uwzgl. świąt)
+ *     - standardWorkingHours (norma miesiąca ustalana ręcznie w Panelu Admina → „Normy godzinowe”)
  *     - totalEmployeeNorm (suma norm etatu wszystkich prac. bez magazyniera)
  *     - activeNonWarehouseCount
  * - TemplateManager i PeriodEstimation w trybie 2 korzystają z tych samych danych

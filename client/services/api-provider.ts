@@ -36,6 +36,7 @@ import { specialWorkNormService as realSpecialWorkNormService } from './api/spec
 import { specialWorkNormMockService } from './mock/special-work-norm.mock';
 import { userService as realUserService } from './api/user.service';
 import { employeeHoursConfirmationService as realEmployeeHoursConfirmationService } from './api/employee-hours-confirmation.service';
+import { workingNormService as realWorkingNormService } from './api/working-norm.service';
 
 // PRZEŁĄCZNIK: true = mock, false = real API
 const USE_MOCK = false;
@@ -167,6 +168,12 @@ export const userService = realUserService;
  * Brak mocka — zawsze real API
  */
 export const employeeHoursConfirmationService = realEmployeeHoursConfirmationService;
+
+/**
+ * Working Norm Service Provider (ADMIN only)
+ * Brak mocka — zawsze real API
+ */
+export const workingNormService = realWorkingNormService;
 
 import { appInitializerService as realAppInitializerService } from './api/app-initializer.service';
 export const appInitializerService = realAppInitializerService;

@@ -22,7 +22,7 @@ import { httpClient } from '@/config/http.client';
 
 /**
  * Dane norm miesięcznych zwracane przez backend.
- * – standardWorkingHours  : godziny wg kalendarza (z uwzgl. polskich świąt)
+ * – standardWorkingHours  : norma miesiąca ustalana ręcznie w Panelu Admina (domyślnie dni robocze * 8h z uwzgl. świąt)
  * – totalEmployeeNorm     : suma indywidualnych norm etatu pracowników (bez magazyniera)
  * – activeNonWarehouseCount: liczba aktywnych pracowników bez magazyniera
  */
@@ -251,7 +251,7 @@ export const draftService = {
 
   /**
    * Pobiera normy miesięczne potrzebne do widgetu PeriodEstimation:
-   * – standardowe godziny robocze (z uwzgl. polskich świąt, np. 160 dla maja 2026)
+   * – normę godzin miesiąca ustaloną w Panelu Admina (domyślnie dni robocze * 8h z uwzgl. świąt)
    * – sumę indywidualnych norm etatu pracowników (bez magazyniera)
    * – liczbę aktywnych pracowników bez magazyniera
    *

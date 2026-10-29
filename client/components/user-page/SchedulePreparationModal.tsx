@@ -689,7 +689,7 @@ export default function SchedulePreparationModal({
                       icon={<Clock className="w-4 h-4 text-amber-400" />}
                       label="Norma miesiąca"
                       value={summaryData?.standardWorkingHours != null ? `${summaryData.standardWorkingHours} h` : '—'}
-                      sub="standardowe godziny robocze"
+                      sub="ustalona w Panelu Admina"
                       color="amber"
                       loading={summaryLoading}
                     />

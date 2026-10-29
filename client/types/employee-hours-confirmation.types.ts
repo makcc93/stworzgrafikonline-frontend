@@ -17,7 +17,7 @@ export interface EmployeeHoursConfirmationDTO {
   employeeId: number;
   employeeFirstName: string;
   employeeLastName: string;
-  /** Domyślna norma godzinowa pracownika wyliczona dla danego miesiąca (kalendarz + etat) */
+  /** Domyślna norma godzinowa pracownika wyliczona dla danego miesiąca (norma miesiąca z Panelu Admina × etat) */
   defaultNormHours: number;
   /** Aktualnie obowiązujące godziny — jeśli brak zapisu, równe defaultNormHours */
   confirmedHours: number;
