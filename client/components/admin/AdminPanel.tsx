@@ -14,6 +14,7 @@ import { validatePositionName, validatePositionDescription, createEmptyPositionF
 import { validateBranchName, createEmptyBranchForm, branchToFormData, type BranchFormData } from '@/utils/branch.utils';
 import { validateRegionName, regionToFormData, createEmptyRegionForm, type RegionFormData } from '@/utils/region.utils';
 import WorkingNormsTab from './WorkingNormsTab';
+import HolidaysTab from './HolidaysTab';
 import InitializeNormsTab from './InitializeNormsTab';
 
 // ==================== BILLING PERIOD HELPERS ====================
@@ -93,7 +94,7 @@ const emptyUserForm = (): CreateUserFormData => ({
 
 // ==================== TYPES ====================
 
-type Tab = 'regions' | 'branches' | 'positions' | 'specialWorkNorms' | 'workingNorms' | 'billing' | 'users' | 'stores' | 'initialize';
+type Tab = 'regions' | 'branches' | 'positions' | 'specialWorkNorms' | 'workingNorms' | 'holidays' | 'billing' | 'users' | 'stores' | 'initialize';
 type ModalMode = 'create' | 'edit' | null;
 
 interface BillingPeriodFormData {
@@ -899,13 +900,14 @@ export default function AdminPanel() {
       <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-2">
         <div className="flex items-center gap-3">
           <div className="flex gap-2 flex-wrap flex-1">
-            {(['regions', 'branches', 'positions', 'specialWorkNorms', 'workingNorms', 'billing', 'users', 'stores', 'initialize'] as Tab[]).map(tab => {
+            {(['regions', 'branches', 'positions', 'specialWorkNorms', 'workingNorms', 'holidays', 'billing', 'users', 'stores', 'initialize'] as Tab[]).map(tab => {
               const labels: Record<Tab, string> = {
                 regions:   `Regiony (${regions.length})`,
                 branches:  `Oddziały (${branches.length})`,
                 positions: `Stanowiska (${positions.length})`,
                 specialWorkNorms: `Specjalne normy pracy (${specialWorkNorms.length})`,
                 workingNorms: 'Normy godzinowe',
+                holidays: 'Dni wolne',
                 billing:   `Okresy rozliczenia (${billingPeriods.length})`,
                 users:     `Użytkownicy (${users.length})`,
                 stores:    `Sklepy (${stores.length})`,
@@ -1254,6 +1256,9 @@ export default function AdminPanel() {
 
       {/* ── Working Norms Tab (miesięczne normy godzin, cały rok) ── */}
       {activeTab === 'workingNorms' && <WorkingNormsTab />}
+
+      {/* ── Holidays Tab (dni wolne / niehandlowe, cały rok) ── */}
+      {activeTab === 'holidays' && <HolidaysTab />}
 
       {/* ── Initialize Tab (jednorazowa inicjalizacja norm 2001-2099; do usunięcia po użyciu) ── */}
       {activeTab === 'initialize' && <InitializeNormsTab />}

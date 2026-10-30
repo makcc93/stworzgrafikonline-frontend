@@ -31,6 +31,7 @@ import {
 import { getLatestDraftRecord } from '@/utils/draft.utils';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
 import { useRequestGuard } from '@/hooks/useRequestGuard';
+import { useHolidays, toDateKey } from '@/hooks/useHolidays';
 
 export default function EmployeeProposals() {
   const { selectedStoreId } = useAppContext();
@@ -42,6 +43,8 @@ export default function EmployeeProposals() {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  // dni wolne od pracy (Panel Admina → Dni wolne) — oznaczane w nagłówku i komórkach
+  const holidays = useHolidays(selectedYear, selectedMonth);
 
   const [employees, setEmployees] = useState<ResponseEmployeeDTO[]>([]);
   const [daysOff, setDaysOff] = useState<ResponseEmployeeProposalDaysOffDTO[]>([]);
@@ -565,6 +568,9 @@ export default function EmployeeProposals() {
     return daysOfWeek[date.getDay()];
   };
 
+  const isHolidayDay = (day: number): boolean =>
+    selectedMonth !== null && holidays.has(toDateKey(selectedYear, selectedMonth, day));
+
   const isWeekend = (day: number): boolean => {
     if (selectedMonth === null) return false;
     const date = new Date(selectedYear, selectedMonth, day);
@@ -904,8 +910,11 @@ export default function EmployeeProposals() {
                       return (
                         <th
                           key={`day-${i}`}
+                          title={isHolidayDay(day) ? 'Dzień wolny od pracy' : undefined}
                           className={`border px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${
-                            isWeekend(day)
+                            isHolidayDay(day)
+                              ? 'border-amber-700/50 bg-amber-600/25 text-amber-300'
+                              : isWeekend(day)
                               ? 'border-slate-500 bg-slate-700/50 text-slate-400'
                               : 'border-slate-600 bg-slate-800/50 text-slate-300'
                           }`}
@@ -923,7 +932,9 @@ export default function EmployeeProposals() {
                         <th
                           key={`dow-${i}`}
                           className={`border px-0.5 py-0.5 text-center font-normal text-xs w-12 sticky top-10 z-10 ${
-                            isWeekend(day)
+                            isHolidayDay(day)
+                              ? 'border-amber-700/50 bg-amber-600/15'
+                              : isWeekend(day)
                               ? 'border-slate-500 bg-slate-700/30'
                               : 'border-slate-600 bg-slate-800/30'
                           }`}
@@ -961,7 +972,9 @@ export default function EmployeeProposals() {
                           <td
                             key={day}
                             className={`border px-0.5 py-1 text-center w-12 ${
-                              isWeekend(day)
+                              isHolidayDay(day)
+                                ? 'border-amber-700/50 bg-amber-600/10'
+                                : isWeekend(day)
                                 ? 'border-slate-500 bg-slate-700/20'
                                 : 'border-slate-600'
                             }`}

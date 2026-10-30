@@ -15,6 +15,7 @@ import {
 import { getLatestDraftRecord } from '@/utils/draft.utils';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
 import { useRequestGuard } from '@/hooks/useRequestGuard';
+import { useHolidays, toDateKey } from '@/hooks/useHolidays';
 
 export default function Vacations() {
   const { selectedStoreId } = useAppContext();
@@ -22,6 +23,8 @@ export default function Vacations() {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  // dni wolne od pracy (Panel Admina → Dni wolne) — oznaczane w nagłówku i komórkach
+  const holidays = useHolidays(selectedYear, selectedMonth);
   const [yearlyVacationData, setYearlyVacationData] = useState<{ month: string; monthIndex: number; total: number; lastModifiedRecord: ResponseEmployeeVacationDTO | null }[]>([]);
   const [loadingYearly, setLoadingYearly] = useState(false);
   const [chartRefreshKey, setChartRefreshKey] = useState(0);
@@ -230,6 +233,7 @@ export default function Vacations() {
   };
 
   const getDayType = (day: number): 'weekday' | 'weekend' | 'holiday' => {
+    if (selectedMonth !== null && holidays.has(toDateKey(selectedYear, selectedMonth, day))) return 'holiday';
     if (isWeekend(day)) return 'weekend';
     return 'weekday';
   };
@@ -338,7 +342,7 @@ export default function Vacations() {
                 <tr className="bg-slate-800/50">
                   <th className="border border-slate-600 px-3 py-2 text-left text-slate-300 font-medium sticky top-0 left-0 z-20 bg-slate-800/50 min-w-40 h-10">Pracownik</th>
                   {Array.from({ length: daysInMonth }, (_, i) => (
-                    <th key={`day-${i}`} className={`border border-slate-600 px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${getDayType(i + 1) === 'weekend' ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-800/50 text-slate-300'}`}>
+                    <th key={`day-${i}`} title={getDayType(i + 1) === 'holiday' ? 'Dzień wolny od pracy' : undefined} className={`border border-slate-600 px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${getDayType(i + 1) === 'holiday' ? 'bg-amber-600/25 text-amber-300' : getDayType(i + 1) === 'weekend' ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-800/50 text-slate-300'}`}>
                       {i + 1}
                     </th>
                   ))}
@@ -381,7 +385,7 @@ export default function Vacations() {
                         return (
                           <td
                             key={day}
-                            className={`border px-0.5 py-1 text-center cursor-pointer w-12 ${getDayType(day) === 'weekend' ? 'border-slate-500 bg-slate-700/20' : 'border-slate-600'}`}
+                            className={`border px-0.5 py-1 text-center cursor-pointer w-12 ${getDayType(day) === 'holiday' ? 'border-amber-700/50 bg-amber-600/10' : getDayType(day) === 'weekend' ? 'border-slate-500 bg-slate-700/20' : 'border-slate-600'}`}
                             onMouseDown={(e) => handleCellMouseDown(e, employee.id, day)}
                             onMouseEnter={() => handleCellMouseEnter(employee.id, day)}
                             onMouseUp={handleMouseUp}

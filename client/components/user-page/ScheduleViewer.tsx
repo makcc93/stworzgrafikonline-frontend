@@ -6,6 +6,7 @@ import { employeeService, draftService } from '@/services/api-provider';
 import { storeDeliveryService } from '@/services/api/store-delivery.service';
 import { computeShiftHours, normalizeToTimeString } from '@/utils/shiftNormalize';
 import { formatDateForBackend } from '@/utils/draft.utils';
+import { useHolidays, toDateKey } from '@/hooks/useHolidays';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
 import type { ResponseScheduleDetailsDTO, ShiftCode } from '@/types/schedule.types';
 import type { ResponseStoreDeliveryDTO } from '@/types/store-delivery.types';
@@ -266,6 +267,10 @@ export default function ScheduleViewer({
   // zapotrzebowanie w drafcie (suma hourlyDemand > 0). null, dopóki się nie załaduje.
   const [realWorkDaysCount, setRealWorkDaysCount] = useState<number | null>(null);
 
+  // dni wolne od pracy (Panel Admina → Dni wolne) — oznaczane w nagłówku i komórkach
+  const holidays = useHolidays(year, month);
+  const isHolidayDay = (day: number): boolean => holidays.has(toDateKey(year, month, day));
+
   const days = daysInMonth(year, month);
   const weekendsInMonthCount = countWeekendsInMonth(year, month, days);
 
@@ -506,7 +511,7 @@ export default function ScheduleViewer({
                   ✓ Gotowy
                 </span>
               </div>
-              <p className="text-slate-400 text-xs">Podgląd wygenerowanego grafiku — weekendy wyróżnione</p>
+              <p className="text-slate-400 text-xs">Podgląd wygenerowanego grafiku — weekendy i dni wolne wyróżnione</p>
             </div>
             <button
               onClick={onNavigateNext}
@@ -570,8 +575,11 @@ export default function ScheduleViewer({
                     return (
                       <th
                         key={`h-${day}`}
+                        title={isHolidayDay(day) ? 'Dzień wolny od pracy' : undefined}
                         className={`border px-0.5 py-1 text-center font-medium text-xs w-14 h-10 ${
-                          weekend
+                          isHolidayDay(day)
+                            ? 'border-amber-700/50 bg-amber-600/25 text-amber-300'
+                            : weekend
                             ? 'border-slate-500 bg-slate-600/50 text-slate-300'
                             : 'border-slate-600 bg-slate-800/50 text-slate-300'
                         }`}
@@ -595,7 +603,9 @@ export default function ScheduleViewer({
                       <th
                         key={`dow-${day}`}
                         className={`border px-0.5 py-0.5 text-center font-normal text-xs w-14 ${
-                          weekend
+                          isHolidayDay(day)
+                            ? 'border-amber-700/50 bg-amber-600/15 text-amber-300 font-semibold'
+                            : weekend
                             ? 'border-slate-500 bg-slate-600/30 text-slate-300 font-semibold'
                             : 'border-slate-600 text-slate-400'
                         }`}
@@ -635,7 +645,7 @@ export default function ScheduleViewer({
                             cell.shiftCode === 'DELEGATION'       ? 'border-indigo-500/50' :
                             cell.isWeekend                         ? 'border-slate-500' :
                                                                      'border-slate-600'
-                          } ${cellBgClass(cell)}`}
+                          } ${cellBgClass(cell) || (isHolidayDay(day) ? 'bg-amber-600/10' : '')}`}
                         >
                           {cell.isEmpty ? (
                             // wolne / urlop / L4

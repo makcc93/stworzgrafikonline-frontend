@@ -14,6 +14,7 @@ import {
 import { getLatestDraftRecord } from '@/utils/draft.utils';
 import LastModifiedInfo from '@/components/shared/LastModifiedInfo';
 import { useRequestGuard } from '@/hooks/useRequestGuard';
+import { useHolidays, toDateKey } from '@/hooks/useHolidays';
 
 export default function Delegations() {
   const { selectedStoreId } = useAppContext();
@@ -22,6 +23,8 @@ export default function Delegations() {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  // dni wolne od pracy (Panel Admina → Dni wolne) — oznaczane w nagłówku i komórkach
+  const holidays = useHolidays(selectedYear, selectedMonth);
   const [employees, setEmployees] = useState<ResponseEmployeeDTO[]>([]);
   const [delegations, setDelegations] = useState<ResponseEmployeeDelegationDTO[]>([]);
   const [loading, setLoading] = useState(false);
@@ -193,6 +196,9 @@ export default function Delegations() {
     return ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So'][new Date(selectedYear, selectedMonth, day).getDay()];
   };
 
+  const isHolidayDay = (day: number): boolean =>
+    selectedMonth !== null && holidays.has(toDateKey(selectedYear, selectedMonth, day));
+
   const isWeekend = (day: number): boolean => {
     if (selectedMonth === null) return false;
     const d = new Date(selectedYear, selectedMonth, day).getDay();
@@ -302,7 +308,7 @@ export default function Delegations() {
                 <tr className="bg-slate-800/50">
                   <th className="border border-slate-600 px-3 py-2 text-left text-slate-300 font-medium sticky top-0 left-0 z-20 bg-slate-800/50 min-w-40 h-10">Pracownik</th>
                   {Array.from({ length: daysInMonth }, (_, i) => (
-                    <th key={i} className={`border border-slate-600 px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${isWeekend(i+1) ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-800/50 text-slate-300'}`}>{i + 1}</th>
+                    <th key={i} title={isHolidayDay(i + 1) ? 'Dzień wolny od pracy' : undefined} className={`border border-slate-600 px-0.5 py-1 text-center font-medium text-xs w-12 h-10 sticky top-0 z-10 ${isHolidayDay(i + 1) ? 'bg-amber-600/25 text-amber-300' : isWeekend(i+1) ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-800/50 text-slate-300'}`}>{i + 1}</th>
                   ))}
                 </tr>
                 <tr className="bg-slate-800/30">
@@ -336,7 +342,7 @@ export default function Delegations() {
                       return (
                         <td
                           key={day}
-                          className={`border px-0.5 py-1 text-center cursor-pointer w-12 ${isWeekend(day) ? 'border-slate-500 bg-slate-700/20' : 'border-slate-600'}`}
+                          className={`border px-0.5 py-1 text-center cursor-pointer w-12 ${isHolidayDay(day) ? 'border-amber-700/50 bg-amber-600/10' : isWeekend(day) ? 'border-slate-500 bg-slate-700/20' : 'border-slate-600'}`}
                           onMouseDown={e => handleCellMouseDown(e, employee.id, day)}
                           onMouseEnter={() => handleCellMouseEnter(employee.id, day)}
                           onMouseUp={handleMouseUp}

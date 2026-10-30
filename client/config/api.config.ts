@@ -34,6 +34,7 @@ export const API_CONFIG = {
     billingPeriodConfig: '/api/billing-period-config',
     specialWorkNorms: '/api/special-work-norms',
     workingNorm: '/api/workingNorm',
+    holidays: '/api/holidays',
     employeeHoursConfirmation: (storeId: number) => `/api/stores/${storeId}/hoursConfirmation`,
 
     // user management (ADMIN only)
