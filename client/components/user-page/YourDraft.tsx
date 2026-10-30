@@ -32,6 +32,8 @@ import {
   createEmptyDraft,
   createSampleDraft,
   getLatestDraftRecord,
+  buildMonthDayInfos,
+  buildTemplatesFromDrafts,
 } from '@/utils/draft.utils';
 import { draftService, storeDetailsService, billingPeriodConfigService, storeOpeningHoursService } from '@/services/api-provider';
 import type { DayHours } from '@/services/api/store-opening-hours.service';
@@ -210,6 +212,14 @@ export default function YourDraft() {
   const [monthlyNormData, setMonthlyNormData] = useState<MonthlyNormData | null>(null);
 
   const [drafts, setDrafts] = useState<ResponseDemandDraftDTO[]>([]);
+
+  // Dane wymagane przez MiniCalendar. Komponent oczekuje MonthDayInfo[],
+  // a nie surowej tablicy drafts.
+  const calendarDays = useMemo(
+    () => buildMonthDayInfos(year, month, drafts, buildTemplatesFromDrafts(drafts)),
+    [year, month, drafts]
+  );
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -900,9 +910,8 @@ export default function YourDraft() {
                 year={year}
                 month={month}
                 selectedDate={selectedDate}
-                drafts={drafts}
+                days={calendarDays}
                 holidayDates={holidayDates}
-                onMonthChange={handleMonthChange}
                 onDateSelect={handleDateSelect}
               />
             </div>
@@ -925,8 +934,8 @@ export default function YourDraft() {
                     year={year}
                     month={month}
                     selectedDate={selectedDate}
-                    drafts={drafts}
-                    onMonthChange={handleMonthChange}
+                    days={calendarDays}
+                    holidayDates={holidayDates}
                     onDateSelect={handleDateSelect}
                   />
                 </div>
@@ -1038,3 +1047,4 @@ export default function YourDraft() {
     </div>
   );
 }
+
