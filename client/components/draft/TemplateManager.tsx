@@ -61,6 +61,8 @@ interface TemplateManagerProps {
    *  potwierdzonych godzin (nie norma etatu) i zapis szablonu jest blokowany, jeśli
    *  przekroczyłby ten budżet. */
   isLastMonthOfPeriod?: boolean;
+  /** Dni wolne miesiąca (YYYY-MM-DD) — backend zeruje w nie draft, więc nie liczą się do sum i budżetu. */
+  holidayDates?: Set<string>;
   /** Godziny otwarcia sklepu dla każdego dnia tygodnia; undefined = jeszcze niezaładowane. */
   storeHoursByDay?: StoreHoursByDay;
   /** Wybrany dzień tygodnia (getDay(): 0=niedziela). Trzymany w rodzicu, żeby przeżył przełączenie trybu. */
@@ -160,6 +162,7 @@ export function TemplateManager({
   totalDelegationDays,
   warehousemanName,
   isLastMonthOfPeriod = false,
+  holidayDates,
   storeHoursByDay,
   selectedDayOfWeek,
   onSelectDayOfWeek,
@@ -370,6 +373,7 @@ export function TemplateManager({
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         for (let day = 1; day <= daysInMonth; day++) {
           const date = new Date(year, month, day);
+          if (holidayDates?.has(formatDateForBackend(date))) continue; // dzień wolny — draft wyzerowany
           if (date.getDay() === dayOfWeek) {
             projectedTotal += totalDemand;
           } else {
@@ -431,6 +435,7 @@ export function TemplateManager({
     let total = 0;
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
+      if (holidayDates?.has(formatDateForBackend(date))) continue; // dzień wolny — nie wchodzi do sumy
       const dow = date.getDay();
       if (dirtyBase[dow] !== undefined) {
         const t = templates.find(x => x.dayOfWeek === dow);
@@ -440,7 +445,7 @@ export function TemplateManager({
       }
     }
     return total;
-  }, [storeDrafts, templates, dirtyBase, year, month]);
+  }, [storeDrafts, templates, dirtyBase, year, month, holidayDates]);
 
   if (loadingTemplates) {
     return (

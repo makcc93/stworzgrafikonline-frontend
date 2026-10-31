@@ -284,11 +284,14 @@ export default function YourDraft() {
    */
   const confirmedDraftHours = useMemo(() =>
     drafts.reduce((total, draft) => {
+      // Dzień wolny (Panel Admina → Dni wolne) nie wlicza się do draftu, nawet jeśli draft
+      // zapisano zanim dzień został dodany jako wolny (backend nie przelicza wtedy starych draftów).
+      if (holidayDates.has(draft.draftDate.split('T')[0])) return total;
       const isHoliday = draft.hourlyDemand.every(v => v === 0);
       if (isHoliday) return total;
       return total + draft.hourlyDemand.reduce((s, v) => s + v, 0);
     }, 0),
-  [drafts]);
+  [drafts, holidayDates]);
 
   const activeNonWarehouseCount = useMemo(
     () => employees.filter((e: any) => e.enable && !e.warehouseman).length,
@@ -301,16 +304,17 @@ export default function YourDraft() {
    * confirmedDraftHours (dzień samych zer = święto, pomijany).
    */
   const computeProjectedMonthlyTotal = (dateStr: string, newHourlyDemand: number[]): number => {
-    const dayExists = drafts.some((d) => d.draftDate === dateStr);
-    const dailyDemands = dayExists
-      ? drafts.map((d) => (d.draftDate === dateStr ? newHourlyDemand : d.hourlyDemand))
-      : [...drafts.map((d) => d.hourlyDemand), newHourlyDemand];
+    const byDate = new Map<string, number[]>();
+    drafts.forEach((d) => byDate.set(d.draftDate.split('T')[0], d.hourlyDemand));
+    byDate.set(dateStr, newHourlyDemand);
 
-    return dailyDemands.reduce((total, hourlyDemand) => {
-      const isHoliday = hourlyDemand.every((v) => v === 0);
-      if (isHoliday) return total;
-      return total + hourlyDemand.reduce((s, v) => s + v, 0);
-    }, 0);
+    let total = 0;
+    byDate.forEach((hourlyDemand, date) => {
+      if (holidayDates.has(date)) return; // dzień wolny — poza sumą
+      if (hourlyDemand.every((v) => v === 0)) return;
+      total += hourlyDemand.reduce((s, v) => s + v, 0);
+    });
+    return total;
   };
 
   /**
@@ -943,6 +947,7 @@ export default function YourDraft() {
               warehousemanName={warehouseman ? `${warehouseman.firstName} ${warehouseman.lastName}` : null}
               // Bez załadowanych norm nie blokujemy zapisu budżetem 0 h (tak samo jak assertWithinLastMonthBudget)
               isLastMonthOfPeriod={isLastMonthOfPeriod && monthlyNormData !== null}
+              holidayDates={holidayDates}
               storeHoursByDay={storeHoursByDay}
               selectedDayOfWeek={selectedTemplateDay}
               onSelectDayOfWeek={setSelectedTemplateDay}
