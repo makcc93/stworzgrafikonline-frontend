@@ -177,3 +177,7 @@ export const workingNormService = realWorkingNormService;
 
 import { appInitializerService as realAppInitializerService } from './api/app-initializer.service';
 export const appInitializerService = realAppInitializerService;
+
+import { draftTemplateService as realDraftTemplateService } from './api/draft-template.service';
+/** Draft Template Service Provider — brak mocka, zawsze real API */
+export const draftTemplateService = realDraftTemplateService;

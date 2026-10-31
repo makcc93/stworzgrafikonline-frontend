@@ -6,10 +6,10 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { DayOfWeekTemplate, ResponseDemandDraftDTO } from '@/types/draft.types';
 import { getDatesForDayOfWeek, DEFAULT_DAY_TEMPLATES } from '@/types/draft.types';
-import { draftService } from '@/services/api-provider';
+import { draftService, draftTemplateService } from '@/services/api-provider';
+import { TemplateCopyPanel } from './TemplateCopyPanel';
 import {
   formatDateForBackend,
-  buildTemplatesFromDrafts,
   normalizeDraftDate,
   sumDemand,
   toDemandArray,
@@ -46,8 +46,17 @@ interface TemplateManagerProps {
   month: number;
   maxValue?: number;
   onTemplatesSaved: () => void;
-  /** Aktualne drafty miesiąca z rodzica (YourDraft) — źródło prawdy dla szablonów. */
+  /** Aktualne drafty miesiąca z rodzica (YourDraft) — do sum godzin i budżetu (nie do szablonów). */
   drafts: ResponseDemandDraftDTO[];
+  /** Zapisane szablony miesiąca z backendu (7 pozycji, dayOfWeek = getDay()); dzień bez zapisu = same zera.
+   *  To jest źródło prawdy dla szablonów — nie zależą od indywidualnych edycji dni. */
+  savedTemplates: DayOfWeekTemplate[];
+  /** false, dopóki szablony tego sklepu/miesiąca się ładują. */
+  templatesLoaded: boolean;
+  /** Dni tygodnia (getDay()), które mają ZAPISANY szablon w tym miesiącu. */
+  persistedDays: number[];
+  /** Przejście do innego miesiąca (po skopiowaniu szablonów). */
+  onGoToMonth?: (year: number, month: number) => void;
   // — dane z rodzica (YourDraft) — reaktywne na zapis z obu trybów —
   activeNonWarehouseCount: number;
   /** Suma indywidualnych norm etatu (z backendu), uwzgl. 1/2 etatu etc. */
@@ -155,6 +164,10 @@ export function TemplateManager({
   maxValue = 20,
   onTemplatesSaved,
   drafts,
+  savedTemplates,
+  templatesLoaded,
+  persistedDays,
+  onGoToMonth,
   activeNonWarehouseCount,
   totalEmployeeNorm,
   confirmedDraftHours,
@@ -196,7 +209,7 @@ export function TemplateManager({
   );
 
   // Szablony zbudowane z bazy (uśrednione per dzień tygodnia) + podpisy poszczególnych dni.
-  const dbTemplates = useMemo(() => buildTemplatesFromDrafts(storeDrafts), [storeDrafts]);
+  const dbTemplates = savedTemplates;
   const dbDaySignatures = useMemo(() => {
     const result: Record<number, string> = {};
     for (const t of dbTemplates) result[t.dayOfWeek] = daySignature(t.hourlyDemand);
@@ -250,9 +263,9 @@ export function TemplateManager({
   }, [storeId, year, month]);
 
   /**
-   * Synchronizacja szablonów z bazą. Źródłem prawdy są drafty z bazy:
+   * Synchronizacja szablonów z bazą. Źródłem prawdy są zapisane szablony miesiąca (backend):
    * - dni tygodnia BEZ niezapisanych zmian zawsze pokazują dane z bazy (odświeżają się
-   *   po każdym przeładowaniu draftów, np. po zapisie albo po załadowaniu),
+   *   po każdym przeładowaniu szablonów, np. po zapisie albo po załadowaniu),
    * - dni Z niezapisanymi zmianami zachowują edycje użytkownika,
    * - raz na sklep/miesiąc przywracamy niezapisane edycje z sessionStorage, ale tylko
    *   dla dni, w których baza nie zmieniła się od czasu edycji (zgodny podpis).
@@ -260,6 +273,7 @@ export function TemplateManager({
    */
   useEffect(() => {
     if (!storeId) { setLoadingTemplates(false); return; }
+    if (!templatesLoaded) return; // szablony tego miesiąca jeszcze się ładują
 
     const nextDirty: DirtyBase = { ...dirtyBaseRef.current };
     const overlay: Record<number, number[]> = {};
@@ -276,9 +290,8 @@ export function TemplateManager({
           }
         }
       }
-      // Dopóki drafty się ładują (pusta lista), nie ma z czym porównać — próbujemy ponownie
-      // przy kolejnym przebiegu. Gdy drafty dotarły, decyzja jest ostateczna.
-      if (storeDrafts.length > 0) restoredRef.current = true;
+      // Szablony z bazy są załadowane, więc jest z czym porównać podpisy — decyzja jest ostateczna.
+      restoredRef.current = true;
     }
 
     const current = templatesRef.current;
@@ -297,7 +310,7 @@ export function TemplateManager({
     setDirtyBase(nextDirty);
     if (restoredRef.current) persistDirtyDays(storeId, year, month, merged, nextDirty); // sprząta nieaktualne kopie
     setLoadingTemplates(false);
-  }, [storeId, year, month, storeDrafts, dbTemplates, dbDaySignatures]);
+  }, [storeId, year, month, templatesLoaded, dbTemplates, dbDaySignatures]);
 
   const maxCap = Math.max(maxValue, 1);
   const currentTemplate = templates.find(t => t.dayOfWeek === selectedDayOfWeek);
@@ -340,9 +353,9 @@ export function TemplateManager({
   };
 
   /**
-   * Zapis szablonu JEDNEGO, aktualnie wybranego dnia tygodnia: nadpisuje wszystkie takie dni
-   * w miesiącu (np. wszystkie środy), także te edytowane wcześniej indywidualnie.
-   * Pozostałe dni tygodnia nie są ruszane — ani w bazie, ani w ich niezapisanych edycjach.
+   * Zapis szablonu JEDNEGO, aktualnie wybranego dnia tygodnia. Backend w jednej transakcji zapisuje
+   * szablon i nadpisuje drafty wszystkich takich dni w miesiącu (np. wszystkie środy), także te
+   * edytowane wcześniej indywidualnie; dni wolne dostają zera. Pozostałe dni tygodnia nie są ruszane.
    */
   const handleSaveSelectedDay = async () => {
     const dayOfWeek = selectedDayOfWeek;
@@ -351,29 +364,28 @@ export function TemplateManager({
 
     const savedViewKey = viewKeyRef.current;
     const totalDemand = template.hourlyDemand.reduce((a, b) => a + b, 0);
-    const dates = getDatesForDayOfWeek(year, month, dayOfWeek);
 
     try {
       setSaving(true);
-      const existing = await draftService.getByDateRange(
-        storeId,
-        formatDateForBackend(new Date(year, month, 1)),
-        formatDateForBackend(new Date(year, month + 1, 0))
-      );
-      const existingMap = new Map(existing.content.map(d => [normalizeDraftDate(d.draftDate), d]));
 
       // W ostatnim miesiącu okresu rozliczeniowego totalEmployeeNorm to suma godzin
       // potwierdzonych w zakładce "Pozostałe godziny pracowników" (nie norma etatu) -
       // blokujemy zapis, jeśli po zapisie tego dnia tygodnia suma przekroczyłaby ten budżet.
       // Pozostałe dni liczymy takimi, jakie są teraz w bazie (nie ruszamy ich).
-      // Uwaga: to policzenie z górką - backend zeruje zapotrzebowanie w dni świąteczne
-      // (holidayManager.isHoliday), a tu liczymy je tak jak w szablonie. Lepiej ostrzec z zapasem.
+      // Dni wolne pomijamy - backend zeruje w nie draft.
       if (isLastMonthOfPeriod) {
+        const existing = await draftService.getByDateRange(
+          storeId,
+          formatDateForBackend(new Date(year, month, 1)),
+          formatDateForBackend(new Date(year, month + 1, 0))
+        );
+        const existingMap = new Map(existing.content.map(d => [normalizeDraftDate(d.draftDate), d]));
+
         let projectedTotal = 0;
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         for (let day = 1; day <= daysInMonth; day++) {
           const date = new Date(year, month, day);
-          if (holidayDates?.has(formatDateForBackend(date))) continue; // dzień wolny — draft wyzerowany
+          if (holidayDates?.has(formatDateForBackend(date))) continue;
           if (date.getDay() === dayOfWeek) {
             projectedTotal += totalDemand;
           } else {
@@ -391,34 +403,19 @@ export function TemplateManager({
         }
       }
 
-      let saved = 0, errors = 0;
-      for (const date of dates) {
-        const dateStr = formatDateForBackend(date);
-        const existingDraft = existingMap.get(dateStr);
-        try {
-          if (existingDraft) {
-            await draftService.update(storeId, existingDraft.id, { draftDate: dateStr, hourlyDemand: template.hourlyDemand });
-            saved++;
-          } else if (totalDemand > 0) {
-            await draftService.create(storeId, { draftDate: dateStr, hourlyDemand: template.hourlyDemand });
-            saved++;
-          }
-        } catch { errors++; }
-      }
-
-      if (errors > 0) toast.warning(`${template.dayName}: zapisano ${saved} draftów, ${errors} błędów`);
-      else toast.success(`${template.dayName}: zapisano ${saved} draftów`);
+      const result = await draftTemplateService.save(storeId, year, month + 1, dayOfWeek, template.hourlyDemand);
+      const touched = result.days.created + result.days.updated;
+      toast.success(`${template.dayName}: zapisano szablon, zaktualizowano ${touched} ${touched === 1 ? 'dzień' : 'dni'}`);
 
       // Użytkownik mógł w trakcie zapisu przełączyć sklep/miesiąc — wtedy nie ruszamy stanu nowego widoku.
-      // Przy błędach dzień zostaje oznaczony jako niezapisany, żeby można było ponowić zapis.
-      if (errors === 0 && viewKeyRef.current === savedViewKey) {
+      if (viewKeyRef.current === savedViewKey) {
         const nextDirty = { ...dirtyBaseRef.current };
         delete nextDirty[dayOfWeek];
         commit(templatesRef.current, nextDirty); // czyści też kopię roboczą tego dnia
       }
-      onTemplatesSaved(); // rodzic przeładuje drafts[] → confirmedDraftHours i szablon tego dnia z bazy
+      onTemplatesSaved(); // rodzic przeładuje drafty i szablony → confirmedDraftHours i szablon tego dnia z bazy
     } catch (err) {
-      toast.error('Błąd zapisu szablonu');
+      toast.error(err instanceof Error ? err.message : 'Błąd zapisu szablonu');
     } finally {
       setSaving(false);
     }
@@ -613,7 +610,7 @@ export function TemplateManager({
                     Niezapisane zmiany w: {currentTemplate.dayName}
                   </p>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Zapis nadpisze wszystkie {selectedDayCount} {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]},
+                    Zapis zapisze szablon i nadpisze wszystkie {selectedDayCount} {WEEKDAY_PLURAL[selectedDayOfWeek]} w {MONTH_LOCATIVE[month]},
                     także te edytowane ręcznie. Pozostałe dni tygodnia nie zostaną zmienione.
                   </p>
                 </>
@@ -656,6 +653,18 @@ export function TemplateManager({
               </button>
             </div>
           </div>
+
+          {/* Akcje na szablonach całego miesiąca: zastosuj do dni / kopiuj do innego miesiąca */}
+          <TemplateCopyPanel
+            storeId={storeId}
+            year={year}
+            month={month}
+            templates={templates}
+            persistedDays={persistedDays}
+            hasUnsaved={anyDirty}
+            onApplied={onTemplatesSaved}
+            onGoToMonth={onGoToMonth}
+          />
         </div>
       </div>
     </div>

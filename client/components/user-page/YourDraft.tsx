@@ -27,7 +27,10 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ResponseDemandDraftDTO } from '@/types/draft.types';
+import type { ResponseDemandDraftDTO, DayOfWeekTemplate } from '@/types/draft.types';
+import { DEFAULT_DAY_TEMPLATES } from '@/types/draft.types';
+import type { DemandTemplateResponse } from '@/types/draft-template.types';
+import { API_TO_JS_DAY } from '@/types/draft-template.types';
 import {
   formatDateForBackend,
   parseDateFromBackend,
@@ -35,7 +38,7 @@ import {
   createSampleDraft,
   getLatestDraftRecord,
   buildMonthDayInfos,
-  buildTemplatesFromDrafts,
+  toDemandArray,
   MONTHS_GENITIVE,
 } from '@/utils/draft.utils';
 import { draftService, storeDetailsService, billingPeriodConfigService, storeOpeningHoursService } from '@/services/api-provider';
@@ -44,7 +47,7 @@ import type { MonthlyNormData } from '@/services/api/draft.service';
 import { useHolidays } from '@/hooks/useHolidays';
 import type { BillingPeriodConfigResponse } from '@/types/billing-period-config.types';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
-import { employeeService, vacationService, delegationService } from '@/services/api-provider';
+import { employeeService, vacationService, delegationService, draftTemplateService } from '@/services/api-provider';
 import { TemplateManager, type StoreHoursByDay } from '@/components/draft/TemplateManager';
 import { PeriodEstimation } from '@/components/draft/PeriodEstimation';
 import { DraftHeader } from './draft/DraftHeader';
@@ -250,8 +253,27 @@ export default function YourDraft() {
   /** Dni wolne wybranego miesiąca (Panel Admina → Dni wolne) — oznaczane w MiniCalendar. */
   const holidayDates = useHolidays(year, month);
 
-  // Szablony dni tygodnia uśrednione z draftów miesiąca (to samo źródło co w TemplateManager).
-  const monthTemplates = useMemo(() => buildTemplatesFromDrafts(drafts), [drafts]);
+  // Zapisane szablony miesiąca z backendu (/draftTemplates). Szablon jest osobnym, stałym stanem —
+  // nie zależy od indywidualnych edycji dni. Dzień tygodnia bez zapisu ma same zera.
+  const templatesKey = `${currentStoreId}_${year}_${month}`;
+  const [templateData, setTemplateData] = useState<{ key: string; rows: DemandTemplateResponse[] } | null>(null);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  /** Dane dotyczą bieżącego sklepu i miesiąca (po zmianie widoku od razu false — bez migania starych szablonów). */
+  const templatesLoaded = templateData?.key === templatesKey;
+
+  const monthTemplates = useMemo<DayOfWeekTemplate[]>(() => {
+    const rows = templatesLoaded ? templateData!.rows : [];
+    return DEFAULT_DAY_TEMPLATES.map((base) => {
+      const row = rows.find((r) => API_TO_JS_DAY[r.dayOfWeek] === base.dayOfWeek);
+      return { ...base, hourlyDemand: row ? toDemandArray(row.hourlyDemand) : Array(24).fill(0) };
+    });
+  }, [templateData, templatesLoaded]);
+
+  /** Dni tygodnia (getDay()) z ZAPISANYM szablonem w tym miesiącu. */
+  const persistedTemplateDays = useMemo(
+    () => (templatesLoaded ? templateData!.rows.filter((r) => r.persisted).map((r) => API_TO_JS_DAY[r.dayOfWeek]) : []),
+    [templateData, templatesLoaded]
+  );
 
   // Dane wymagane przez MiniCalendar. Komponent oczekuje MonthDayInfo[],
   // a nie surowej tablicy drafts.
@@ -545,6 +567,34 @@ export default function YourDraft() {
     if (activeMode === 'hoursConfirmation' && !isLastMonthOfPeriod) setActiveMode('templates');
   }, [activeMode, isLastMonthOfPeriod]);
 
+  // Szablony miesiąca z backendu — przeładowują się przy zmianie sklepu/miesiąca i po zapisie szablonu.
+  const templatesGuard = useRequestGuard();
+  const loadTemplates = async () => {
+    if (!currentStoreId) return;
+    const token = templatesGuard.start();
+    const key = templatesKey;
+    try {
+      setTemplatesError(null);
+      const rows = await draftTemplateService.getByMonth(currentStoreId, year, month + 1);
+      if (!templatesGuard.isCurrent(token)) return; // sklep/miesiąc zmienił się w międzyczasie — porzuć
+      setTemplateData({ key, rows: Array.isArray(rows) ? rows : [] });
+    } catch (err) {
+      if (!templatesGuard.isCurrent(token)) return;
+      console.error('API Error podczas pobierania szablonów:', err);
+      setTemplatesError('Nie udało się pobrać szablonów z serwera.');
+    }
+  };
+
+  useEffect(() => {
+    if (!currentStoreId) {
+      setTemplateData(null);
+      setTemplatesError(null);
+      return;
+    }
+    loadTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStoreId, year, month]);
+
   useEffect(() => {
     if (!currentStoreId) {
       setDrafts([]);
@@ -731,6 +781,7 @@ export default function YourDraft() {
    */
   const reloadDraftsAfterTemplateSave = async () => {
     if (!currentStoreId) return;
+    void loadTemplates(); // zapisany/skopiowany szablon → odśwież szablony razem z draftami
     const token = draftsGuard.start();
     try {
       const response = await draftService.getByDateRange(
@@ -933,12 +984,31 @@ export default function YourDraft() {
         <div key="templates" className="draft-fade-in grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* TemplateManager */}
           <div className="lg:col-span-2">
+            {templatesError && !templatesLoaded ? (
+              <div className="bg-red-950/40 border border-red-800/60 rounded-2xl p-5 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
+                  <p className="text-sm text-red-200">{templatesError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadTemplates()}
+                  className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors flex-shrink-0"
+                >
+                  Ponów
+                </button>
+              </div>
+            ) : (
             <TemplateManager
               storeId={currentStoreId}
               year={year}
               month={month}
               maxValue={maxStaffFromStore}
               drafts={drafts}
+              savedTemplates={monthTemplates}
+              templatesLoaded={templatesLoaded}
+              persistedDays={persistedTemplateDays}
+              onGoToMonth={handleMonthChange}
               activeNonWarehouseCount={monthlyNormData?.activeNonWarehouseCount ?? activeNonWarehouseCount}
               totalEmployeeNorm={monthlyNormData?.totalEmployeeNorm ?? 0}
               confirmedDraftHours={confirmedDraftHours}
@@ -953,6 +1023,7 @@ export default function YourDraft() {
               onSelectDayOfWeek={setSelectedTemplateDay}
               onTemplatesSaved={reloadDraftsAfterTemplateSave}
             />
+            )}
           </div>
 
           {/* Kalendarz + statystyki */}
@@ -1112,3 +1183,4 @@ export default function YourDraft() {
     </div>
   );
 }
+
