@@ -34,6 +34,7 @@ import {
   getLatestDraftRecord,
   buildMonthDayInfos,
   buildTemplatesFromDrafts,
+  MONTHS_GENITIVE,
 } from '@/utils/draft.utils';
 import { draftService, storeDetailsService, billingPeriodConfigService, storeOpeningHoursService } from '@/services/api-provider';
 import type { DayHours } from '@/services/api/store-opening-hours.service';
@@ -42,7 +43,7 @@ import { useHolidays } from '@/hooks/useHolidays';
 import type { BillingPeriodConfigResponse } from '@/types/billing-period-config.types';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
 import { employeeService, vacationService, delegationService } from '@/services/api-provider';
-import { TemplateManager } from '@/components/draft/TemplateManager';
+import { TemplateManager, type StoreHoursByDay } from '@/components/draft/TemplateManager';
 import { PeriodEstimation } from '@/components/draft/PeriodEstimation';
 import { DraftHeader } from './draft/DraftHeader';
 import { MonthlyPeopleChart } from './draft/MonthlyPeopleChart';
@@ -213,13 +214,6 @@ export default function YourDraft() {
 
   const [drafts, setDrafts] = useState<ResponseDemandDraftDTO[]>([]);
 
-  // Dane wymagane przez MiniCalendar. Komponent oczekuje MonthDayInfo[],
-  // a nie surowej tablicy drafts.
-  const calendarDays = useMemo(
-    () => buildMonthDayInfos(year, month, drafts, buildTemplatesFromDrafts(drafts)),
-    [year, month, drafts]
-  );
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -253,6 +247,17 @@ export default function YourDraft() {
 
   /** Dni wolne wybranego miesiąca (Panel Admina → Dni wolne) — oznaczane w MiniCalendar. */
   const holidayDates = useHolidays(year, month);
+
+  // Szablony dni tygodnia uśrednione z draftów miesiąca (to samo źródło co w TemplateManager).
+  const monthTemplates = useMemo(() => buildTemplatesFromDrafts(drafts), [drafts]);
+
+  // Dane wymagane przez MiniCalendar. Komponent oczekuje MonthDayInfo[],
+  // a nie surowej tablicy drafts.
+  const calendarDays = useMemo(
+    () => buildMonthDayInfos(year, month, drafts, monthTemplates),
+    [year, month, drafts, monthTemplates]
+  );
+
   const [selectedDate, setSelectedDate] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<'templates' | 'edit' | 'hoursConfirmation'>('templates');
 
@@ -360,19 +365,24 @@ export default function YourDraft() {
   }, [storeOpeningHours, selectedDate, selectedTemplateDay, year, month]);
 
   /**
-   * Godziny otwarcia/zamknięcia dla aktualnie wybranego dnia tygodnia w szablonach.
-   * selectedTemplateDay używa tej samej konwencji co getDay(): 0=niedziela, 1=pon, …, 6=sobota.
+   * Godziny otwarcia sklepu dla KAŻDEGO dnia tygodnia (klucz = getDay(): 0=niedziela).
+   * TemplateManager sam wybiera z nich godziny dla aktualnie wybranego dnia i oznacza
+   * dni zamknięte. undefined = godziny jeszcze niezaładowane.
    */
-  const storeHoursForTemplateDay = useMemo(() => {
-    if (!storeOpeningHours) return null;
-    const key = DAY_INDEX_TO_KEY[selectedTemplateDay];
-    const hours = storeOpeningHours[key];
-    if (!hours) return null;
-    return {
-      openHour: parseInt(hours.open.split(':')[0], 10),
-      closeHour: parseInt(hours.close.split(':')[0], 10),
-    };
-  }, [storeOpeningHours, selectedTemplateDay]);
+  const storeHoursByDay = useMemo<StoreHoursByDay | undefined>(() => {
+    if (!storeOpeningHours) return undefined;
+    const result: StoreHoursByDay = {};
+    DAY_INDEX_TO_KEY.forEach((key, dayOfWeek) => {
+      const hours = storeOpeningHours[key];
+      result[dayOfWeek] = hours
+        ? {
+            openHour: parseInt(hours.open.split(':')[0], 10),
+            closeHour: parseInt(hours.close.split(':')[0], 10),
+          }
+        : null;
+    });
+    return result;
+  }, [storeOpeningHours]);
 
   /**
    * Oblicza pozycję bieżącego miesiąca w jego okresie rozliczeniowym.
@@ -588,6 +598,19 @@ export default function YourDraft() {
 
   const draft = getCurrentDraft();
 
+  // Dane dla DraftChart: szablon dnia tygodnia wybranego dnia + podpisy.
+  const WEEKDAY_GENITIVE = ['niedzieli', 'poniedziałku', 'wtorku', 'środy', 'czwartku', 'piątku', 'soboty'];
+  const selectedDow = selectedDate !== null ? new Date(year, month, selectedDate).getDay() : null;
+  const selectedDayTemplate: number[] =
+    (selectedDow !== null
+      ? monthTemplates.find((t) => t.dayOfWeek === selectedDow)?.hourlyDemand
+      : undefined) ?? Array(24).fill(0);
+  const selectedDayTemplateLabel = selectedDow !== null ? `szablon ${WEEKDAY_GENITIVE[selectedDow]}` : 'szablon';
+  const selectedDayLabel =
+    selectedDow !== null && selectedDate !== null
+      ? `${DAYS_OF_WEEK[(selectedDow + 6) % 7]}, ${selectedDate} ${MONTHS_GENITIVE[month]}`
+      : '';
+
   // Zapisany rekord draftu (z backendu) dla aktualnie wybranego konkretnego dnia —
   // potrzebny do wyświetlenia "Ostatnia zmiana" (updatedAt/createdAt) w SelectionInfo.
   const selectedDraftRecord = useMemo(() => {
@@ -624,7 +647,13 @@ export default function YourDraft() {
     if (mode === 'templates') {
       setSelectedDate(null);
     } else if (mode === 'edit') {
-      setSelectedDate(1);
+      // Pierwszy dzień, który nie jest świętem (święta są w kalendarzu zablokowane).
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      let firstFree = 1;
+      for (let day = 1; day <= daysInMonth; day++) {
+        if (!holidayDates.has(formatDateForBackend(new Date(year, month, day)))) { firstFree = day; break; }
+      }
+      setSelectedDate(firstFree);
     }
   };
 
@@ -744,14 +773,14 @@ export default function YourDraft() {
   /**
    * Zapis z DraftChart (tryb 2).
    */
-  const handleDraftChartSave = async (values: number[]) => {
-    if (!currentStoreId) return;
-    if (selectedDate === null) { toast.warning('Wybierz konkretny dzień'); return; }
+  const handleDraftChartSave = async (values: number[]): Promise<boolean> => {
+    if (!currentStoreId) return false;
+    if (selectedDate === null) { toast.warning('Wybierz konkretny dzień'); return false; }
 
     const date = new Date(year, month, selectedDate);
     const dateStr = formatDateForBackend(date);
 
-    if (!assertWithinLastMonthBudget(dateStr, values)) return;
+    if (!assertWithinLastMonthBudget(dateStr, values)) return false;
 
     try {
       const existing = drafts.find((d) => d.draftDate === dateStr);
@@ -769,8 +798,10 @@ export default function YourDraft() {
         setDrafts((prev) => [...prev, created]);
       }
       toast.success('Zapisano zmiany');
+      return true;
     } catch (error) {
       toast.error('Nie udało się zapisać zmian');
+      return false;
     }
   };
 
@@ -887,9 +918,9 @@ export default function YourDraft() {
               warehousemanName={warehouseman ? `${warehouseman.firstName} ${warehouseman.lastName}` : null}
               // Bez załadowanych norm nie blokujemy zapisu budżetem 0 h (tak samo jak assertWithinLastMonthBudget)
               isLastMonthOfPeriod={isLastMonthOfPeriod && monthlyNormData !== null}
-              openHour={storeHoursForTemplateDay?.openHour}
-              closeHour={storeHoursForTemplateDay?.closeHour}
-              onDayOfWeekChange={setSelectedTemplateDay}
+              storeHoursByDay={storeHoursByDay}
+              selectedDayOfWeek={selectedTemplateDay}
+              onSelectDayOfWeek={setSelectedTemplateDay}
               onTemplatesSaved={reloadDraftsAfterTemplateSave}
             />
           </div>
@@ -976,6 +1007,10 @@ export default function YourDraft() {
               <DraftChart
                 key={`${currentStoreId}-${year}-${month}-${selectedDate}`}
                 draft={draft}
+                template={selectedDayTemplate}
+                templateLabel={selectedDayTemplateLabel}
+                dateLabel={selectedDayLabel}
+                hasDraft={selectedDraftRecord !== undefined}
                 onSave={handleDraftChartSave}
                 maxValue={maxStaffFromStore}
                 openHour={storeHoursForSelectedDay?.openHour}
@@ -1047,4 +1082,3 @@ export default function YourDraft() {
     </div>
   );
 }
-
