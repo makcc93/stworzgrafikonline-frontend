@@ -23,6 +23,8 @@ import {
   AlertTriangle,
   History,
   Sparkles,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ResponseDemandDraftDTO } from '@/types/draft.types';
@@ -878,6 +880,29 @@ export default function YourDraft() {
                 />
               </div>
             </div>
+          </div>
+
+          {/* Nawigacja po miesiącach */}
+          <div className="flex-shrink-0 flex items-center justify-between gap-2 px-2 py-2 bg-slate-800/60 border border-slate-700 rounded-xl">
+            <button
+              type="button"
+              onClick={() => handleMonthChange(month === 0 ? year - 1 : year, month === 0 ? 11 : month - 1)}
+              aria-label="Poprzedni miesiąc"
+              className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <span className="min-w-[150px] text-center text-sm font-bold text-white tabular-nums">
+              {MONTHS[month]} {year}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleMonthChange(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1)}
+              aria-label="Następny miesiąc"
+              className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
           </div>
 
           {/* Odznaczka okresu rozliczeniowego */}
