@@ -15,6 +15,8 @@ interface PeriodEstimationProps {
   totalDelegationDays: number;
   /** Najwyższa obsada w pojedynczej godzinie (opcjonalnie) — wyświetlana jako czwarty wskaźnik. */
   peakStaff?: number | null;
+  /** Dodatkowe godziny na osobę z przesunięć godzin zmian (np. 09:00 → 08:30); doliczane do "Wymagane przez draft". */
+  shiftHoursPerEmployee?: number;
 }
 
 const round1 = (value: number) => Math.round(value * 10) / 10;
@@ -52,15 +54,19 @@ export function PeriodEstimation({
   totalVacationDays,
   totalDelegationDays,
   peakStaff = null,
+  shiftHoursPerEmployee = 0,
 }: PeriodEstimationProps) {
   if (activeNonWarehouseCount === 0) return null;
 
   const n = activeNonWarehouseCount;
 
-  const confirmedPerEmployee = round1(confirmedDraftHours / n);
+  const draftPerEmployee = round1(confirmedDraftHours / n);
+  const shiftExtraPerEmployee = round1(shiftHoursPerEmployee);
+  // Przesunięcia zmian wydłużają (lub skracają) zmiany, więc zużywają normę tak samo jak draft.
+  const confirmedPerEmployee = round1(draftPerEmployee + shiftExtraPerEmployee);
 
   const livePerEmployee =
-    liveTemplateDraftHours !== null ? round1(liveTemplateDraftHours / n) : null;
+    liveTemplateDraftHours !== null ? round1(liveTemplateDraftHours / n + shiftExtraPerEmployee) : null;
 
   const liveDeltaPerEmployee =
     livePerEmployee !== null ? round1(livePerEmployee - confirmedPerEmployee) : null;
@@ -112,7 +118,8 @@ export function PeriodEstimation({
               Wymagane przez draft
             </span>
             <InfoTip label="Co oznacza „Wymagane przez draft”?">
-              Szacowana liczba godzin pracy na osobę zależna od planowania obsady. Wartość ta nie uwzględnia urlopów i delegacji.
+              Szacowana liczba godzin pracy na osobę zależna od planowania obsady, wraz z przesunięciami godzin zmian
+              (np. 09:00 → 08:30). Wartość ta nie uwzględnia urlopów i delegacji.
             </InfoTip>
           </div>
           <p className="flex items-baseline gap-1.5 flex-wrap">
@@ -129,6 +136,11 @@ export function PeriodEstimation({
           <p className="text-xs text-emerald-400/80 mt-1">
             ✓ {confirmedDraftHours} h (baza) ÷ {n} prac.
           </p>
+          {shiftExtraPerEmployee !== 0 && (
+            <p className="text-xs text-blue-300/90 mt-0.5 tabular-nums">
+              w tym {fmtSigned(shiftExtraPerEmployee)} h/os. z przesunięć zmian
+            </p>
+          )}
           {liveDeltaPerEmployee === 0 && livePerEmployee !== null && (
             <p className="text-xs text-slate-500 mt-0.5">Niezapisane zmiany nie zmieniają sumy godzin</p>
           )}

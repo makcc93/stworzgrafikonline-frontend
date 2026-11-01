@@ -3,6 +3,7 @@
  * Main draft management component with clear mode separation
  * Mode 1: Template Management (activeMode === 'templates')
  * Mode 2: Specific Day Editing  (activeMode === 'edit')
+ * Mode 3: Shift hour shifts (activeMode === 'shiftHours')
  *
  * ARCHITEKTURA LICZENIA GODZIN:
  * - confirmedDraftHours: useMemo z drafts[] → automatycznie aktualny po każdym zapisie (tryb 1 i 2)
@@ -25,6 +26,7 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ResponseDemandDraftDTO, DayOfWeekTemplate } from '@/types/draft.types';
@@ -47,8 +49,10 @@ import type { MonthlyNormData } from '@/services/api/draft.service';
 import { useHolidays } from '@/hooks/useHolidays';
 import type { BillingPeriodConfigResponse } from '@/types/billing-period-config.types';
 import type { ResponseEmployeeDTO } from '@/types/employee.types';
-import { employeeService, vacationService, delegationService, draftTemplateService } from '@/services/api-provider';
+import { employeeService, vacationService, delegationService, draftTemplateService, shiftHourImpactService } from '@/services/api-provider';
 import { TemplateManager, type StoreHoursByDay } from '@/components/draft/TemplateManager';
+import { ShiftHourPlanner } from '@/components/draft/ShiftHourPlanner';
+import type { ShiftHourImpact } from '@/types/shift-hour-impact.types';
 import { PeriodEstimation } from '@/components/draft/PeriodEstimation';
 import { DraftHeader } from './draft/DraftHeader';
 import { MonthlyPeopleChart } from './draft/MonthlyPeopleChart';
@@ -110,7 +114,7 @@ function BillingPeriodRing({ current, total }: { current: number; total: number 
   );
 }
 
-type DraftModeId = 'templates' | 'edit' | 'hoursConfirmation';
+type DraftModeId = 'templates' | 'edit' | 'shiftHours' | 'hoursConfirmation';
 
 interface ModeTabConfig {
   id: DraftModeId;
@@ -261,6 +265,12 @@ export default function YourDraft() {
   /** Dane dotyczą bieżącego sklepu i miesiąca (po zmianie widoku od razu false — bez migania starych szablonów). */
   const templatesLoaded = templateData?.key === templatesKey;
 
+  // Szacowany wpływ przesunięć godzin zmian (np. 09:00 → 08:30) na godziny w tym miesiącu.
+  const [shiftImpactData, setShiftImpactData] = useState<{ key: string; impact: ShiftHourImpact } | null>(null);
+  const [shiftImpactLoading, setShiftImpactLoading] = useState(false);
+  const shiftHoursPerEmployee = shiftImpactData?.key === templatesKey ? shiftImpactData.impact.extraHoursPerEmployee : 0;
+  const shiftImpact = shiftImpactData?.key === templatesKey ? shiftImpactData.impact : null;
+
   const monthTemplates = useMemo<DayOfWeekTemplate[]>(() => {
     const rows = templatesLoaded ? templateData!.rows : [];
     return DEFAULT_DAY_TEMPLATES.map((base) => {
@@ -283,7 +293,7 @@ export default function YourDraft() {
   );
 
   const [selectedDate, setSelectedDate] = useState<number | null>(null);
-  const [activeMode, setActiveMode] = useState<'templates' | 'edit' | 'hoursConfirmation'>('templates');
+  const [activeMode, setActiveMode] = useState<DraftModeId>('templates');
 
   /**
    * Aktualnie wybrany dzień tygodnia w zakładce Szablony.
@@ -595,6 +605,38 @@ export default function YourDraft() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStoreId, year, month]);
 
+  // Wpływ przesunięć godzin zmian — liczony z ZAPISANYCH draftów, więc odświeżamy po każdej ich zmianie
+  // (z krótkim opóźnieniem, żeby seria zapisów nie wysyłała serii zapytań) oraz po zapisie konfiguracji.
+  const shiftImpactGuard = useRequestGuard();
+  const loadShiftImpact = async () => {
+    if (!currentStoreId) return;
+    const token = shiftImpactGuard.start();
+    const key = templatesKey;
+    try {
+      setShiftImpactLoading(true);
+      const impact = await shiftHourImpactService.getImpact(currentStoreId, year, month + 1);
+      if (!shiftImpactGuard.isCurrent(token)) return;
+      setShiftImpactData({ key, impact });
+    } catch (err) {
+      if (!shiftImpactGuard.isCurrent(token)) return;
+      // Estymacja jest dodatkiem — bez niej kafelki pokazują sam draft.
+      console.warn('Could not load shift hour impact:', err);
+      setShiftImpactData(null);
+    } finally {
+      if (shiftImpactGuard.isCurrent(token)) setShiftImpactLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentStoreId) {
+      setShiftImpactData(null);
+      return;
+    }
+    const timer = setTimeout(() => { loadShiftImpact(); }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStoreId, year, month, drafts]);
+
   useEffect(() => {
     if (!currentStoreId) {
       setDrafts([]);
@@ -698,7 +740,7 @@ export default function YourDraft() {
     if (day !== null) setActiveMode('edit');
   };
 
-  const handleModeChange = (mode: 'templates' | 'edit' | 'hoursConfirmation') => {
+  const handleModeChange = (mode: DraftModeId) => {
     setActiveMode(mode);
     if (mode === 'templates') {
       setSelectedDate(null);
@@ -908,6 +950,7 @@ export default function YourDraft() {
   const MODE_TABS: ModeTabConfig[] = [
     { id: 'templates', label: 'Szablony Dni Tygodnia', shortLabel: 'Szablony', icon: LayoutTemplate },
     { id: 'edit', label: 'Edycja Konkretnych Dni', shortLabel: 'Edycja Dni', icon: CalendarClock },
+    { id: 'shiftHours', label: 'Przesunięcia Zmian', shortLabel: 'Przesunięcia', icon: Clock },
     ...(isLastMonthOfPeriod
       ? [{ id: 'hoursConfirmation' as const, label: 'Pozostałe Godziny Pracowników', shortLabel: 'Godziny', icon: Users2 }]
       : []),
@@ -1009,6 +1052,7 @@ export default function YourDraft() {
               templatesLoaded={templatesLoaded}
               persistedDays={persistedTemplateDays}
               onGoToMonth={handleMonthChange}
+              shiftHoursPerEmployee={shiftHoursPerEmployee}
               activeNonWarehouseCount={monthlyNormData?.activeNonWarehouseCount ?? activeNonWarehouseCount}
               totalEmployeeNorm={monthlyNormData?.totalEmployeeNorm ?? 0}
               confirmedDraftHours={confirmedDraftHours}
@@ -1099,6 +1143,7 @@ export default function YourDraft() {
                   totalEmployeeNorm={monthlyNormData.totalEmployeeNorm}
                   totalVacationDays={totalVacationDays}
                   totalDelegationDays={totalDelegationDays}
+                  shiftHoursPerEmployee={shiftHoursPerEmployee}
                 />
               </div>
             )}
@@ -1124,7 +1169,32 @@ export default function YourDraft() {
         </div>
       )}
 
-      {/* ============ MODE 3: POZOSTAŁE GODZINY PRACOWNIKÓW (ostatni miesiąc okresu) ============ */}
+      {/* ============ MODE 3: PRZESUNIĘCIA ZMIAN (np. 09:00 → 08:30) ============ */}
+      {activeMode === 'shiftHours' && (
+        <div key="shiftHours" className="draft-fade-in space-y-5">
+          {monthlyNormData && (
+            <PeriodEstimation
+              confirmedDraftHours={confirmedDraftHours}
+              liveTemplateDraftHours={null}
+              activeNonWarehouseCount={monthlyNormData.activeNonWarehouseCount}
+              totalEmployeeNorm={monthlyNormData.totalEmployeeNorm}
+              totalVacationDays={totalVacationDays}
+              totalDelegationDays={totalDelegationDays}
+              shiftHoursPerEmployee={shiftHoursPerEmployee}
+            />
+          )}
+          <ShiftHourPlanner
+            storeId={currentStoreId}
+            year={year}
+            month={month}
+            impact={shiftImpact}
+            impactLoading={shiftImpactLoading}
+            onSaved={() => { loadShiftImpact(); }}
+          />
+        </div>
+      )}
+
+      {/* ============ MODE 4: POZOSTAŁE GODZINY PRACOWNIKÓW (ostatni miesiąc okresu) ============ */}
       {activeMode === 'hoursConfirmation' && currentStoreId && (
         <div key="hoursConfirmation" className={`draft-fade-in ${GLASS_PANEL} overflow-hidden`} style={{ minHeight: 480 }}>
           <EmployeeHoursConfirmationStep

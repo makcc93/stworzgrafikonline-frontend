@@ -37,6 +37,8 @@ import { specialWorkNormMockService } from './mock/special-work-norm.mock';
 import { userService as realUserService } from './api/user.service';
 import { employeeHoursConfirmationService as realEmployeeHoursConfirmationService } from './api/employee-hours-confirmation.service';
 import { workingNormService as realWorkingNormService } from './api/working-norm.service';
+export { draftTemplateService } from './api/draft-template.service';
+export { shiftHourImpactService } from './api/shift-hour-impact.service';
 
 // PRZEŁĄCZNIK: true = mock, false = real API
 const USE_MOCK = false;
@@ -181,3 +183,10 @@ export const appInitializerService = realAppInitializerService;
 import { draftTemplateService as realDraftTemplateService } from './api/draft-template.service';
 /** Draft Template Service Provider — brak mocka, zawsze real API */
 export const draftTemplateService = realDraftTemplateService;
+
+import { shiftHourImpactService as realShiftHourImpactService } from './api/shift-hour-impact.service';
+/** Shift Hour Impact Service Provider — brak mocka, zawsze real API */
+export const shiftHourImpactService = realShiftHourImpactService;
+
+export { draftTemplateService } from './api/draft-template.service';
+export { shiftHourImpactService } from './api/shift-hour-impact.service';

@@ -57,6 +57,8 @@ interface TemplateManagerProps {
   persistedDays: number[];
   /** Przejście do innego miesiąca (po skopiowaniu szablonów). */
   onGoToMonth?: (year: number, month: number) => void;
+  /** Dodatkowe godziny na osobę z przesunięć godzin zmian — doliczane w kafelkach szacowania. */
+  shiftHoursPerEmployee?: number;
   // — dane z rodzica (YourDraft) — reaktywne na zapis z obu trybów —
   activeNonWarehouseCount: number;
   /** Suma indywidualnych norm etatu (z backendu), uwzgl. 1/2 etatu etc. */
@@ -168,6 +170,7 @@ export function TemplateManager({
   templatesLoaded,
   persistedDays,
   onGoToMonth,
+  shiftHoursPerEmployee = 0,
   activeNonWarehouseCount,
   totalEmployeeNorm,
   confirmedDraftHours,
@@ -469,6 +472,7 @@ export function TemplateManager({
         totalVacationDays={totalVacationDays}
         totalDelegationDays={totalDelegationDays}
         peakStaff={peakStaff}
+        shiftHoursPerEmployee={shiftHoursPerEmployee}
       />
 
       <div className="flex items-start gap-2.5 bg-amber-900/15 border border-amber-700/30 rounded-xl px-4 py-2.5 text-xs text-amber-300/90">
