@@ -187,6 +187,3 @@ export const draftTemplateService = realDraftTemplateService;
 import { shiftHourImpactService as realShiftHourImpactService } from './api/shift-hour-impact.service';
 /** Shift Hour Impact Service Provider — brak mocka, zawsze real API */
 export const shiftHourImpactService = realShiftHourImpactService;
-
-export { draftTemplateService } from './api/draft-template.service';
-export { shiftHourImpactService } from './api/shift-hour-impact.service';
