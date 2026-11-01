@@ -37,8 +37,6 @@ import { specialWorkNormMockService } from './mock/special-work-norm.mock';
 import { userService as realUserService } from './api/user.service';
 import { employeeHoursConfirmationService as realEmployeeHoursConfirmationService } from './api/employee-hours-confirmation.service';
 import { workingNormService as realWorkingNormService } from './api/working-norm.service';
-export { draftTemplateService } from './api/draft-template.service';
-export { shiftHourImpactService } from './api/shift-hour-impact.service';
 
 // PRZEŁĄCZNIK: true = mock, false = real API
 const USE_MOCK = false;
