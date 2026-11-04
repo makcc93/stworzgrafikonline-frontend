@@ -23,7 +23,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import ShiftHourConfigStep from './ShiftHourConfigStep';
 import EmployeeHoursConfirmationStep from './EmployeeHoursConfirmationStep';
 import GeneratingOverlay, { type GenerationStage } from './GeneratingOverlay';
 import { scheduleService } from '@/services/api/schedule.service';
@@ -39,7 +38,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-type ModalStep = 'checklist' | 'shift-hour-config' | 'hours-confirmation' | 'summary';
+type ModalStep = 'checklist' | 'hours-confirmation' | 'summary';
 
 type ChecklistItemId = 'team-config' | 'vacations' | 'delegations' | 'proposals' | 'draft';
 
@@ -117,8 +116,7 @@ const CHECKLIST_ITEMS: ChecklistItem[] = [
 ];
 
 const BASE_STEPS = [
-  { key: 'checklist' as const,         label: 'Checklista' },
-  { key: 'shift-hour-config' as const, label: 'Reguły godzin' },
+  { key: 'checklist' as const, label: 'Checklista' },
 ];
 
 const HOURS_CONFIRMATION_STEP = { key: 'hours-confirmation' as const, label: 'Godziny miesiąca' };
@@ -357,9 +355,10 @@ export default function SchedulePreparationModal({
     loadSummaryData();
   };
 
-  // Po kroku "Reguły godzin": jeśli to ostatni miesiąc okresu rozliczenia,
+  // Po checkliście: jeśli to ostatni miesiąc okresu rozliczenia,
   // przejdź do kroku "Godziny miesiąca", w przeciwnym razie od razu do podsumowania.
-  const goToNextAfterShiftHourConfig = () => {
+  // (Reguły godzin zmian ustawia się wcześniej: Planowanie obsady → Przesunięcia zmian.)
+  const goToNextAfterChecklist = () => {
     if (isLastMonthOfPeriod) {
       setStep('hours-confirmation');
     } else {
@@ -437,8 +436,8 @@ export default function SchedulePreparationModal({
               <p className="text-slate-400 text-xs mt-0.5">
                 {step === 'checklist'
                   ? 'Potwierdź gotowość i skonfiguruj grafik'
-                  : step === 'shift-hour-config'
-                  ? 'Konfiguracja podmian godzin zmian'
+                  : step === 'hours-confirmation'
+                  ? 'Potwierdzenie godzin ostatniego miesiąca okresu'
                   : 'Podsumowanie przed generowaniem'}
               </p>
             </div>
@@ -574,41 +573,19 @@ export default function SchedulePreparationModal({
                     Anuluj
                   </button>
                   <button
-                    onClick={() => setStep('shift-hour-config')}
-                    disabled={!allChecked}
+                    onClick={goToNextAfterChecklist}
+                    disabled={!allChecked || checkingPeriod}
                     className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                      allChecked
+                      allChecked && !checkingPeriod
                         ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white hover:shadow-lg hover:shadow-green-500/30 hover:scale-105 active:scale-95'
                         : 'bg-slate-700/50 text-slate-500 cursor-not-allowed opacity-60'
                     }`}
                   >
-                    <Clock className="w-4 h-4" />
-                    Reguły godzin
+                    {checkingPeriod ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Dalej
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
-              </motion.div>
-            )}
-
-            {/* ── KROK 2: KONFIGURACJA GODZIN ── */}
-            {step === 'shift-hour-config' && (
-              <motion.div
-                key="shift-hour-config"
-                initial={{ opacity: 0, x: 16 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 16 }}
-                transition={{ duration: 0.18 }}
-                className="flex flex-col flex-1 min-h-0"
-              >
-                {/* ShiftHourConfigStep bez własnego przycisku generowania — tutaj przycisk Dalej */}
-                <ShiftHourConfigStep
-                  storeId={storeId}
-                  onBack={() => setStep('checklist')}
-                  onConfirm={goToNextAfterShiftHourConfig}
-                  isConfirming={checkingPeriod}
-                  confirmLabel="Dalej"
-                  confirmIcon={<ChevronRight className="w-4 h-4" />}
-                />
               </motion.div>
             )}
 
@@ -627,7 +604,7 @@ export default function SchedulePreparationModal({
                   year={selectedYear}
                   month={selectedMonth + 1}
                   monthName={`${monthName} ${selectedYear}`}
-                  onBack={() => setStep('shift-hour-config')}
+                  onBack={() => setStep('checklist')}
                   onConfirm={goToSummary}
                   isConfirming={false}
                 />
@@ -727,7 +704,7 @@ export default function SchedulePreparationModal({
                 {/* Footer */}
                 <div className="border-t border-slate-700 bg-slate-800/50 px-6 py-4 flex gap-3 flex-shrink-0">
                   <button
-                    onClick={() => setStep(isLastMonthOfPeriod ? 'hours-confirmation' : 'shift-hour-config')}
+                    onClick={() => setStep(isLastMonthOfPeriod ? 'hours-confirmation' : 'checklist')}
                     disabled={isGenerating}
                     className="px-5 py-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-all hover:scale-105 active:scale-95"
                   >
